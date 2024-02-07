@@ -1,0 +1,1132 @@
+///$tab Main
+SET ThousandSep=',';
+SET DecimalSep='.';
+SET MoneyThousandSep=',';
+SET MoneyDecimalSep='.';
+SET MoneyFormat='$ ###0.00;-$ ###0.00';
+SET TimeFormat='h:mm:ss TT';
+SET DateFormat='M/D/YYYY';
+SET TimestampFormat='M/D/YYYY h:mm:ss[.fff] TT';
+SET FirstWeekDay=6;
+SET BrokenWeeks=1;
+SET ReferenceDay=0;
+SET FirstMonthOfYear=1;
+SET CollationLocale='en-US';
+SET CreateSearchIndexOnReload=1;
+SET MonthNames='Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec';
+SET LongMonthNames='January;February;March;April;May;June;July;August;September;October;November;December';
+SET DayNames='Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+SET LongDayNames='Monday;Tuesday;Wednesday;Thursday;Friday;Saturday;Sunday';
+SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
+
+$(Must_Include=lib://prd-repository:gcs_qlik/foundation/bi/enterprise-v2/subroutines/s_environment_var.txt);
+
+
+AsOfDate:
+LOAD Distinct
+    Start_YTD_TY,
+    End_YTD_TY,
+    Start_MTD_TY,
+    End_MTD_TY,
+    Start_WTD_TY,
+    End_WTD_TY,
+    Start_QTD_TY,
+    End_QTD_TY,
+    Start_DAY_TY,
+    End_DAY_TY,
+    "Fiscal Year - Month",
+    MTD_Week_Counter,
+    "Date" as AsOfDate,
+    "LY Date" as LYDate,
+    Start_MTD_LY, 
+    Start_QTD_LY, 
+    Start_WTD_LY,
+    End_WTD_LY,
+    Start_DAY_LY,
+    End_DAY_LY, 
+    End_MTD_LY,
+    End_QTD_LY,
+    Start_YTD_LY,
+    End_YTD_LY
+    
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd]
+(qvd)Where Date< Today(1) and Date>(AddYears(Today(1),-2));
+
+SET vDAY_Start = "=Max(Start_DAY_TY)";
+SET vYTD_Start = "=Max(Start_YTD_TY)";
+SET vQTD_Start = "=Max(Start_QTD_TY)";
+SET vMTD_Start = "=Max(Start_MTD_TY)";
+SET vWTD_Start = "=Max(Start_WTD_TY)";
+SET vDAY_End = "=Max(End_DAY_TY)";
+SET vYTD_End = "=Max(End_YTD_TY)";
+SET vQTD_End = "=Max(End_QTD_TY)";
+SET vMTD_End = "=Max(End_MTD_TY)";
+SET vWTD_End = "=Max(End_WTD_TY)";
+SET vYesterLY = "=Max(LYDate)";
+Set vMTDLY = "=Max(Start_MTD_LY)";
+Set vQTDLY = "=Max(Start_QTD_LY)";
+Set vWTD_Start_LY = "=Max(Start_WTD_LY)";
+Set vWTD_End_LY = "=Max(End_WTD_LY)";
+SET vDAY_Start_LY = "=Max(Start_DAY_LY)";
+SET vDAY_End_LY = "=Max(End_DAY_LY)";
+SET vMTD_Start_LY = "=Max(Start_MTD_LY)";
+SET vMTD_End_LY = "=Max(End_MTD_LY)";
+SET vQTD_Start_LY = "=Max(Start_QTD_LY)";
+SET vQTD_End_LY = "=Max(End_QTD_LY)";
+SET vYTD_Start_LY = "=Max(Start_YTD_LY)";
+SET vYTD_End_LY = "=Max(End_YTD_LY)";
+
+
+
+///$tab Volume
+LIB CONNECT TO 'Repository:Google_BQ-BDA';
+Volume:
+load *,
+rcvd_loc_id as %Store
+;
+select 
+coalesce(ty.rcvd_date,ly.ty_tda_dte,sly.ty_tda_dte) rcvd_date,
+coalesce(ly.rcvd_date,ty.ly_tda_dte,sly.ly_tda_dte) ly_rcvd_date,
+coalesce(sly.rcvd_date,ty.sly_tda_dte,ly.sly_tda_dte) sly_rcvd_date,
+coalesce(sly.rcvd_loc_id,ty.rcvd_loc_id,ly.rcvd_loc_id) rcvd_loc_id,
+coalesce(sly.rcvd_terr_id,ty.rcvd_terr_id,ly.rcvd_terr_id) rcvd_terr_id,
+coalesce(sly.ret_typ,ty.ret_typ,ly.ret_typ) ret_typ,
+coalesce(sly.rcvd_dc_id,ty.rcvd_dc_id,ly.rcvd_dc_id) rcvd_dc_id,
+coalesce(sly.rtlr_nm,ty.rtlr_nm,ly.rtlr_nm) brand_name,
+coalesce(ty.total_volume,0) total_volume,
+---coalesce(ly.total_volume,0) ly_total_volume,
+coalesce(ty.total_volume,0) ly_total_volume,
+coalesce(sly.total_volume,0) sly_total_volume,
+coalesce(ty.rcvd_loc_id,0) store_count,
+---coalesce(ly.rcvd_loc_id,0) ly_store_count,
+coalesce(ty.rcvd_loc_id,0) ly_store_count,
+coalesce(sly.rcvd_loc_id,0) sly_store_count,
+From
+(select 
+  DATE(rcvd_cred_tmst) as rcvd_date, 
+  ly_tda_dte,
+  sly_tda_dte,
+  rcvd_loc_id, 
+  ret_typ, 
+  rcvd_dc_id,
+  terr_nbr rcvd_terr_id,
+  rtlr_nm,
+count(distinct trkg_id) as total_volume
+from `kohls-bda-prd.dp_logistics.bqt_lgs_raas_rpt` a
+join `kohls-bda-prd.dp_location.bqt_lgs_loc_dim` c on c.loc_nbr = a.rcvd_loc_id
+left join (SELECT a.tm_dim_ky_dte, sly_tda_dte,a.ly_tda_dte
+FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal` a
+JOIN( SELECT safe_cast(tydate as date) tm_dim_ky_dte,safe_cast(shifteddate as date) sly_tda_dte 
+            FROM `kohls-bda-prd.dp_logistics_stage.bqts_lgs_unvrsl_cal_shftd`, unnest(shifteddays) where name = 'Finance Shift') c
+      ON a.tm_dim_ky_dte = c.tm_dim_ky_dte) b
+ON  DATE(rcvd_cred_tmst) = b.tm_dim_ky_dte
+where terr_nbr between 1 and 6
+group by 1,2,3,4,5,6,7,8
+) ty
+Left Join
+(select 
+  DATE(rcvd_cred_tmst) as rcvd_date, 
+  b.tm_dim_ky_dte ty_tda_dte,
+  sly_tda_dte,
+  rcvd_loc_id, 
+  ret_typ, 
+  rcvd_dc_id,
+  terr_nbr rcvd_terr_id,
+  rtlr_nm,
+count(distinct trkg_id) as total_volume
+from `kohls-bda-prd.dp_logistics.bqt_lgs_raas_rpt` a
+join `kohls-bda-prd.dp_location.bqt_lgs_loc_dim` c on c.loc_nbr = a.rcvd_loc_id
+left join (SELECT a.tm_dim_ky_dte, sly_tda_dte,a.ly_tda_dte
+FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal` a
+JOIN( SELECT safe_cast(tydate as date) tm_dim_ky_dte,safe_cast(shifteddate as date) sly_tda_dte 
+            FROM `kohls-bda-prd.dp_logistics_stage.bqts_lgs_unvrsl_cal_shftd`, unnest(shifteddays) where name = 'Finance Shift') c
+      ON a.tm_dim_ky_dte = c.tm_dim_ky_dte) b
+ON  DATE(rcvd_cred_tmst) = ly_tda_dte
+where terr_nbr between 1 and 6
+group by 1,2,3,4,5,6,7,8
+)
+ly
+On ty.ly_tda_dte = ly.rcvd_date
+and ty.rcvd_date = ly.ty_tda_dte
+and ty.sly_tda_dte = ly.sly_tda_dte
+and ty.ret_typ = ly.ret_typ
+and ty.rcvd_loc_id = ly.rcvd_loc_id
+and ty.rcvd_terr_id = ly.rcvd_terr_id
+and ty.rcvd_dc_id = ly.rcvd_dc_id
+and ty.rtlr_nm = ly.rtlr_nm
+Left Join
+(select 
+  DATE(rcvd_cred_tmst) as rcvd_date, 
+  b.tm_dim_ky_dte ty_tda_dte,
+  ly_tda_dte,
+  rcvd_loc_id, 
+  terr_nbr rcvd_terr_id,
+  ret_typ, 
+  rcvd_dc_id,
+  rtlr_nm,
+count(distinct trkg_id) as total_volume
+from `kohls-bda-prd.dp_logistics.bqt_lgs_raas_rpt` a
+join `kohls-bda-prd.dp_location.bqt_lgs_loc_dim` c on c.loc_nbr = a.rcvd_loc_id
+left join (SELECT a.tm_dim_ky_dte, sly_tda_dte,a.ly_tda_dte
+FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal` a
+JOIN( SELECT safe_cast(tydate as date) tm_dim_ky_dte,safe_cast(shifteddate as date) sly_tda_dte 
+            FROM `kohls-bda-prd.dp_logistics_stage.bqts_lgs_unvrsl_cal_shftd`, unnest(shifteddays) where name = 'Finance Shift') c
+      ON a.tm_dim_ky_dte = c.tm_dim_ky_dte) b
+ON  DATE(rcvd_cred_tmst) = sly_tda_dte
+where terr_nbr between 1 and 6
+group by 1,2,3,4,5,6,7,8
+)
+sly
+On ty.sly_tda_dte = sly.rcvd_date
+and ty.rcvd_date = sly.ty_tda_dte
+and ty.ly_tda_dte = sly.ly_tda_dte
+and ty.ret_typ = sly.ret_typ
+and ty.rcvd_loc_id = sly.rcvd_loc_id
+and ty.rcvd_terr_id = sly.rcvd_terr_id
+and ty.rcvd_dc_id = sly.rcvd_dc_id
+and ty.rtlr_nm = sly.rtlr_nm
+;
+
+
+
+StoreLink:
+load Distinct %Store,
+%Store  as %Key_1
+resident Volume ;
+
+
+//Drop Fields srcvd_terr_id, rcvd_dc_id;
+///$tab Amazon Value Caps
+LIB CONNECT TO 'Repository:Google_BQ-BDA';
+
+
+Amazon_Volume_Caps:
+Load *,
+STORE as %Store
+;
+SELECT 
+CAP,
+Cap_Level,
+Cap_Level_Int,
+CHANGE_WEEK_AVG,
+FSCL_WK_NBR,
+Last_Week_Avg_Vol,
+LAST_WEEK_AVG_VOL_NO_CAP,
+No_Cap,
+Non_Cap_Store,
+POST_CHANGE_AVG,
+POST_CHANGE_W35,
+POST_CHANGE_W36,
+POST_CHANGE_W37,
+POST_CHANGE_W38,
+RCVD_RMAs,
+RCVD_WEEK,
+RCVD_WEEK_NBR,
+SIX_WEEK_AVG,
+STORE,
+Stores_Over_10pct_of_Cap,
+Stores_Under_10pct_of_Cap,
+Stores_Within_10pct_of_Cap,
+Variance_Cap,
+WEEK_LABELING,
+WK28_2023,
+WK29_2023,
+WK30_2023,
+WK31_2023,
+WK32_2023,
+WK33_2023
+FROM `kohls-bda-log-prd.log_lab`.`Amazon_Volume_Caps`
+WHERE RCVD_WEEK IS NOT NULL and STORE NOT IN (1325,1405);
+
+
+CapStoreDIM:
+Load Distinct
+%Store,
+CAP,
+Cap_Level,
+Cap_Level_Int,
+No_Cap,
+Non_Cap_Store
+// ,
+// 'Vol' as Source
+// ,
+// 1 as counter
+Resident Amazon_Volume_Caps
+;
+
+
+Drop fields CAP, Cap_Level, Cap_Level_Int, No_Cap, STORE,Non_Cap_Store From Amazon_Volume_Caps;
+
+Concatenate(CapStoreDIM)
+Load Distinct
+STORE as %Store ,
+CAP,
+Cap_Level,
+Cap_Level_Int,
+No_Cap
+// ,
+// 'Vol_LY' as Source
+// ,
+// 1 as counter
+where not Exists(%Store, STORE );
+Select 
+STORE, 
+CAP,
+Cap_Level,
+Cap_Level_Int,
+No_Cap
+FROM `kohls-bda-log-prd.log_lab`.`Amazon_Volume_Caps_LY`;
+
+
+Amazon_Volume_Caps_LY:
+load *,
+STORE as %Store,
+RCVD_RMAs as RCVD_RMAs_LY
+;
+SELECT 
+CAP,
+Cap_Level,
+Cap_Level_Int,
+LY_Avg_Vol,
+LY_AVG_VOL_NO_CAP,
+No_Cap,
+Non_Cap_Store_LY,
+RCVD_RMAs,
+STORE
+FROM `kohls-bda-log-prd.log_lab`.`Amazon_Volume_Caps_LY`;
+
+Drop fields CAP, Cap_Level, Cap_Level_Int, No_Cap, RCVD_RMAs, STORE From Amazon_Volume_Caps_LY;
+
+Concatenate(StoreLink)
+Load %Store,
+%Store as %Key_1
+Resident CapStoreDIM;
+
+
+
+outer join (CapStoreDIM)
+load Distinct 
+%Store,
+rcvd_dc_id as %LOC
+resident Volume ;
+///$tab Scan Compliance 
+ScanCompliance:
+load 
+str_lod_loc_id as %Store,
+str_lod_loc_id&'|'& tm_dim_ky_dte as %Key_1,
+str_lod_dc_id as DC,
+str_lod_cartons,
+rc_lod_cartons,
+// fscl_mn_nm as "Fiscal Month",
+// fscl_yr_nbr as "Fiscal Year",
+tm_dim_ky_dte as %Date
+;
+Select
+str_lod_loc_id, ///store
+str_lod_dc_id,  //dc
+str_lod_cartons,
+rc_lod_cartons,
+// fscl_mn_nm,
+// fscl_yr_nbr
+tm_dim_ky_dte
+FROM `kohls-bda-log-prd.log_lab`.`Amazon Scan Compliance`;
+
+Concatenate(StoreLink)
+load 
+%Key_1,
+%Store,
+%Date
+Resident ScanCompliance;
+
+
+drop Field [%Date], [%Store] from ScanCompliance;
+///$tab Amazon SLA
+AmazonSla:
+load *,
+fscl_yr_nbr&'|' & fscl_qtr_nbr&'|' &fscl_mn_nm as %Key
+;
+SELECT *,
+CASE WHEN dc = '810' THEN '810-FY'
+WHEN dc = '830' THEN '830-WN'
+WHEN dc = '840'  THEN '840-BS'
+WHEN dc = '855'  THEN '855-SB'
+WHEN dc = '860'  THEN '860-TX'
+WHEN dc = '865'  THEN '865-NY'
+WHEN dc = '875'  THEN '875-MA'
+WHEN dc = '885'  THEN '885-PA'
+WHEN dc = '890'  THEN '890-OW'
+ELSE null
+END AS STR_LOD_DC_ID,
+AVG(case when dc = 'Network' then matched_rmas_tendered else NULL end) as network_ttl_rmas,
+AVG(case when dc = 'Network' then goal_rcvd_store_to_arrive_dc else NULL end)*100 as Network_goal_store_to_dc,
+AVG(case when dc = 'Network' then goal_arrive_dc_to_rc_lod else NULL end)*100 as Network_goal_dc_to_rc_lod,
+AVG(case when dc = 'Network' then goal_rc_lod_to_tendered else NULL end)*100 as Network_goal_rc_lod_to_tendered,
+AVG(case when dc = 'Network' then goal_total_sla else NULL end)*100 as Network_goal_ttl_sla,
+AVG(case when dc = 'Network' then avg_rcvd_store_to_arrive_dc else NULL end) as Network_avg_store_to_dc,
+AVG(case when dc = 'Network' then avg_arrive_dc_to_rc_lod else NULL end) as Network_avg_dc_to_rc_lod,
+AVG(case when dc = 'Network' then avg_rc_lod_to_tendered else NULL end) as Network_avg_rc_lod_to_tendered,
+AVG(case when dc = 'Network' then avg_total_sla else NULL end) as Network_avg_total_sla,
+FROM `kohls-bda-log-prd.log_lab`.`SCA_AMAZON_SLA_RPT`
+group by 1,2,3,4,5,6,7,8,9,10,11,12,13;
+
+
+CalendarSLA:
+load fscl_yr_nbr&'|' & fscl_qtr_nbr&'|' &fscl_mn_nm as %Key,
+fscl_yr_nbr,
+fscl_qtr_nbr,
+fscl_mn_nm 
+Resident AmazonSla;
+
+Drop Fields fscl_yr_nbr, fscl_qtr_nbr,fscl_mn_nm from  AmazonSla;
+
+RMASummary:
+load *,
+fscl_yr_nbr&'|' & fscl_qtr_nbr&'|' &fscl_mn_nm as %Key
+;
+SELECT COUNT(DISTINCT(TRKG_ID)) as received_kohs, fscl_mn_nm, fscl_qtr_nbr, fscl_yr_nbr
+FROM
+(SELECT
+trkg_id, srt_bin_id,
+rcvd_loc_id str,
+substr(ret_cntr_lod_trlr_id,3,4) dc,
+--regexp_replace(substr(str_lod_trlr_id,7), '[^0-9]','') ib_str_trlr_nbr,
+ltrim(regexp_replace(str_lod_trlr_id, '[^0-9]',''), '0') ib_str_trlr_nbr,
+cast(rcvd_cred_tmst as date) str_rcvd_dte, cast(srt_cred_tmst as date) str_srt_dte, cast(ret_cntr_lod_cred_tmst as date) rc_lod_dte,
+ltrim(regexp_replace(substr(ret_cntr_lod_trlr_id,17), '[^0-9]',''), '0') ob_amzn_trlr_nbr,
+extract(date from cast(ord_rcvd_tmst as timestamp) at time zone "America/Chicago") tendered_date,
+From `kohls-bda-prd.dp_logistics.bqt_lgs_raas_rpt` KOH
+LEFT JOIN `kohls-bda-prd.dp_supplychain.bqv_suply_chn_dc_shipt` DC
+ON ltrim(regexp_replace(DC.trlr_nbr,'[^0-9]',''), '0') = ltrim(regexp_replace(substr(KOH.ret_cntr_lod_trlr_id,17), '[^0-9]',''), '0')
+AND substr(KOH.ret_cntr_lod_trlr_id,3,4) = right(DC.pu_loc_extl_id,4)
+
+Where cast(ret_cntr_lod_cred_tmst as date) >= '2023-09-01'
+And ret_cntr_lod_trlr_id is not null
+And trkg_id is not null
+And ret_typ = 'Amazon'
+And srt_bin_id is not null
+And rcvd_cred_tmst is not null
+And srt_cred_tmst is not null
+And ret_cntr_lod_cred_tmst is not null
+And date_diff(cast(rcvd_cred_tmst as date),cast(srt_cred_tmst as date),day) < 2
+AND ord_typ = 'AMAZON_RETURNS'
+And mode_exec_stat_desc <> 'CANCELLED'
+And extract(date from cast(ord_rcvd_tmst as timestamp) at time zone "America/Chicago") >= '2023-10-01'
+And ord_rcvd_tmst is not null And pu_loc_extl_id is not null And trlr_nbr is not null) a
+INNER JOIN `kohls-bda-prd.dp_location.bqv_lgs_tm_cal` tm
+On a.tendered_date = tm.tm_dim_ky_dte
+group by 2,3,4;
+
+
+Drop Fields fscl_yr_nbr, fscl_qtr_nbr,fscl_mn_nm from  RMASummary;
+
+///$tab QCS
+//LIB CONNECT TO 'Repository:Google_BQ-BDA';
+
+
+Temp_Cal_yesterday:
+LOAD DISTINCT
+    "Fiscal Year" AS "Yesterday Fiscal Year",
+    "Fiscal Qtr" AS "Yesterday Fiscal Qtr",
+    "Fiscal Month" AS "Yesterday Fiscal Month",
+    "LY Date" AS "Yesterday LY Date",
+   	"Start_WTD_TY" as "Start WTD Date",
+    "Start_MTD_TY" AS "Start MTD Date",
+    "Start_QTD_TY" AS "Start QTD Date",
+    "Start_YTD_TY" AS "Start YTD Date",
+    "Start_WTD_LY" AS "LY Start WTD Date",
+    "Start_MTD_LY" AS "LY Start MTD Date",
+    "Start_QTD_LY" AS "LY Start QTD Date",
+    "Start_YTD_LY" AS "LY Start YTD Date",
+    "Date Number" AS "Yesterday Date"
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd](qvd)
+WHERE %DATE = Floor(ConvertToLocalTime(Now(), 'UTC-30:00'));
+
+
+//variable declaration
+LET vYear = PEEK('Yesterday Fiscal Year',0,'Temp_Cal_yesterday');
+LET vQtr = PEEK('Yesterday Fiscal Qtr',0,'Temp_Cal_yesterday');
+LET vMonth = PEEK('Yesterday Fiscal Month',0,'Temp_Cal_yesterday');
+LET vYesterLY = PEEK('Yesterday LY Date',0,'Temp_Cal_yesterday');
+LET vYesterDate = PEEK('Yesterday Date',0,'Temp_Cal_yesterday');
+LET vTodayDate = PEEK('Today Date',0,'Temp_Cal_today');
+LET vToday = PEEK('Today',0,'Temp_Cal_today');
+LET vWTD = PEEK('Start WTD Date',0,'Temp_Cal_yesterday');
+LET vMTD = PEEK('Start MTD Date',0,'Temp_Cal_yesterday');
+LET vQTD = PEEK('Start QTD Date',0,'Temp_Cal_yesterday');
+LET vYTD = PEEK('Start YTD Date',0,'Temp_Cal_yesterday');
+LET vWTDLY = PEEK('LY Start WTD Date',0,'Temp_Cal_yesterday');
+LET vMTDLY = PEEK('LY Start MTD Date',0,'Temp_Cal_yesterday');
+LET vQTDLY = PEEK('LY Start QTD Date',0,'Temp_Cal_yesterday');
+LET vYTDLY = PEEK('LY Start YTD Date',0,'Temp_Cal_yesterday');
+//-------------------------
+LET vYTDR1Strt = PEEK('ytdrange1start',0,'LY_Date_Ranges4');
+LET vYTDR1End = PEEK('ytdrange1end',0,'LY_Date_Ranges4');
+LET vYTDR2Strt = PEEK('ytdrange1start',1,'LY_Date_Ranges4');
+LET vYTDR2End = PEEK('ytdrange1end',1,'LY_Date_Ranges4');
+LET vYTDR3Strt= PEEK('ytdrange1start',2,'LY_Date_Ranges4');
+LET vYTDR3End = PEEK('ytdrange1end',2,'LY_Date_Ranges4');
+LET vYTDNotes = PEEK('Notes',0,'LY_Date_Ranges4');
+//-------------------------
+LET vQTDR1Strt = PEEK('qrange1start',0,'LY_Date_Ranges3');
+LET vQTDR1End = PEEK('qrange1end',0,'LY_Date_Ranges3');
+LET vQTDR2Strt = PEEK('qrange1start',1,'LY_Date_Ranges3');
+LET vQTDR2End = PEEK('qrange1end',1,'LY_Date_Ranges3');
+LET vQTDR3Strt = PEEK('qrange1start',2,'LY_Date_Ranges3');
+LET vQTDR3End = PEEK('qrange1end',2,'LY_Date_Ranges3');
+LET vQTDNotes = PEEK('Notes',0,'LY_Date_Ranges3');
+//-------------------------
+LET vMTDR1Strt = PEEK('mrange1start',0,'LY_Date_Ranges2');
+LET vMTDR1End = PEEK('mrange1end',0,'LY_Date_Ranges2');
+LET vMTDR2Strt = PEEK('mrange1start',1,'LY_Date_Ranges2');
+LET vMTDR2End = PEEK('mrange1end',1,'LY_Date_Ranges2');
+LET vMTDR3Strt = PEEK('mrange1start',2,'LY_Date_Ranges2');
+LET vMTDR3End = PEEK('mrange1end',2,'LY_Date_Ranges2');
+LET vMTDNotes = PEEK('Notes',0,'LY_Date_Ranges2');
+//-------------------------
+LET vYTRR1Strt = PEEK('yrange1start',0,'LY_Date_Ranges1');
+LET vYTRR1End = PEEK('yrange1end',0,'LY_Date_Ranges1');
+LET vYTRR2Strt = PEEK('yrange2start',0,'LY_Date_Ranges1');
+LET vYTRR2End = PEEK('yrange2end',0,'LY_Date_Ranges1');
+LET vYTRNotes = PEEK('Notes',0,'LY_Date_Ranges1');
+
+
+SET TodayMem = Floor(ConvertToLocalTime(Now(), 'UTC-06:00'));
+SET YesterdayMem = Floor(ConvertToLocalTime(Now(), 'UTC-30:00'));
+
+drop Table Temp_Cal_yesterday;
+
+
+
+///$tab Break
+//exit Script;
+///$tab RetrurnsTracker
+/*From this point on the code mimics the Raas Tracker script, when a qvd is eventually produced 
+from that app we can switch over to that and will only need to set Key fields.*/
+
+
+SET vFormatSize =
+dual(if( $1 > 1e9, num( $1 / 1e9, '#,##0.0B'),
+     if( $1 > 1e6, num( $1 / 1e6, '#,##0.0M'),
+     if( $1 > 1e3, num( $1 / 1e3, '#,##0.0K'),
+     num($1, '#,##0')))), $1);
+     
+SET vFormatSizeDollar =
+dual(if( $1 > 1e9, num( $1 / 1e9, '$#,##0.0B'),
+     if( $1 > 1e6, num( $1 / 1e6, '$#,##0.0M'),
+     if( $1 > 1e3, num( $1 / 1e3, '$#,##0.0K'),
+     num($1, '$#,##0.00')))), $1);
+
+LIB CONNECT TO 'Repository:Google_BQ-BDA';
+
+
+MarketingPODates:
+LOAD 
+	TY_Date 			as [Date],
+	Krista_PO_Dates 	as [Marketing PO Date];
+
+SQL 
+WITH date_range AS (
+SELECT MIN(tm_dim_ky_dte) strt_dt
+,MAX(tm_dim_ky_dte) end_dt
+
+FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal`
+
+WHERE CAST(fscl_yr_nbr as INT) >= (SELECT DISTINCT CAST(fscl_yr_nbr as INT)-1 FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal` WHERE tm_dim_ky_dte = CURRENT_DATE())
+AND tm_dim_ky_dte < CURRENT_DATE()
+)
+SELECT 
+ 
+	TY_Date, 
+    Krista_PO_Dates
+FROM 
+kohls-bda-mkt-prd.dp_marketing_sandbox.det_po_cal_dim
+INNER JOIN date_range dcy
+ON TY_Date BETWEEN dcy.strt_dt and dcy.end_dt;
+
+ly_date_map:
+Mapping Load
+	Date 					as input,
+    [Marketing PO Date] 	as output
+Resident
+	MarketingPODates;
+
+
+
+ty_date_map:
+Mapping Load
+    [Marketing PO Date] 	as input,
+	Date 					as output
+Resident
+	MarketingPODates;
+
+
+min_max_dates:
+Load
+	Min([Marketing PO Date]) as min_date,
+    Max([Marketing PO Date]) as max_date
+Resident
+	MarketingPODates;
+    
+    
+Let vMinPODate = Date(Peek('min_date',0,'min_max_dates'),'YYYY-MM-DD');
+Let vMaxPODate = Date(Peek('max_date',0,'min_max_dates'),'YYYY-MM-DD');
+
+
+Drop Table min_max_dates;
+///$tab Amazon Offer Data
+Load 
+Date,
+Date as %Date,
+str_nbr&'|'&Date as %Key_1, 
+ApplyMap('ly_date_map',Date,Null())	as [LY_DATE],
+str_nbr,
+str_nbr & ' - ' & loc_nm as [Store Number - Name],
+regn_nm,
+ecom_ind,
+amz_ind,  
+grouped_promo_name,
+TRAN_COUNT,      
+SLD_QTY,      
+NET_CHRGD_AMT,    
+ntrl_mrgn_amt,
+dmnd_mktg_mkdn_amt,
+MKTG_DISC_AMT,      
+AMZN_MKTG_DISC_AMT,
+issued_cnt,
+issue_str_nbr,
+dmnd_reg_rtl_pric_amt
+;
+[Amazon_RaaS_Data]:
+
+SQL
+WITH date_range AS (
+SELECT MIN(tm_dim_ky_dte) strt_dt
+,MAX(tm_dim_ky_dte) end_dt
+
+FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal`
+
+WHERE CAST(fscl_yr_nbr as INT) >= (SELECT DISTINCT CAST(fscl_yr_nbr as INT)-1 FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal` WHERE tm_dim_ky_dte = CURRENT_DATE())
+AND tm_dim_ky_dte < CURRENT_DATE()
+)
+,sls_temp as (
+select distinct CASE WHEN ecom_ind = 'N' THEN mstr_trn_hdr_id
+                                    WHEN ecom_ind = 'Y' THEN ord_nbr
+                                    ELSE 'N/A' END as mstr_trn_hdr_id ,  
+               dmnd_dte,
+					     agg.str_nbr,
+                         agg.loc_nm,
+                         CASE WHEN R.str_gp_nm IS NULL THEN 'NA' ELSE R.str_gp_nm END AS regn_nm,
+               ecom_ind,
+               sum(agg.dmnd_sld_qty) as SLD_QTY,    
+               sum(agg.dmnd_net_chrgd_amt) as NET_CHRGD_AMT,
+			   sum(agg.dmnd_ntrl_mrgn_amt) as ntrl_mrgn_amt,
+               SUM(agg.dmnd_mktg_mkdn_amt) as dmnd_mktg_mkdn_amt,
+               SUM(agg.dmnd_reg_rtl_pric_amt) as dmnd_reg_rtl_pric_amt
+               from `kohls-bda-prd.dp_marketing.bqt_sls_cust_agg` agg   
+               INNER JOIN DATE_RANGE dcy
+               ON agg.dmnd_dte BETWEEN dcy.strt_dt and dcy.end_dt   
+               LEFT JOIN `kohls-bda-prd.dp_location.bqv_lgs_c_geo_clustr_dim` r
+				ON agg.str_nbr = r.str_nbr
+               where agg.TRN_TYP_CDE in ('01','02')
+
+               group by 1,2,3,4,5,6
+)
+,ofr_temp as (
+select mstr_trn_hdr_id, sum(MKTG_DISC_AMT) as MKTG_DISC_AMT,  count(distinct OFFER_ID) as OFFER_COUNT      
+                from `kohls-bda-mkt-prd.dp_marketing.det_store_demand_offer` ofr
+                group by 1
+                  
+                UNION ALL
+                  
+                select ecom_ord_nbr as mstr_trn_hdr_id, sum(MKTG_DISC_AMT) as MKTG_DISC_AMT,  count(distinct PROMO_ID) as OFFER_COUNT      
+                from `kohls-bda-mkt-prd.dp_marketing.det_ecom_demand_offer` ofr
+                group by 1  
+)
+,amzn_temp as (
+SELECT mstr_trn_hdr_id
+,trn_sls_dte
+,TRIM(REPLACE(REGEXP_EXTRACT(promo_name,r'_OF_(.*?)(?: \(\.*|$|Gift Omni)'),'Returns','Return')) as grouped_promo_name
+,sum(MKTG_DISC_AMT) as MKTG_DISC_AMT    --offer_id, 
+
+FROM `kohls-bda-mkt-prd.dp_marketing.det_store_demand_offer` sls      
+INNER JOIN DATE_RANGE dcy
+ON sls.trn_sls_dte BETWEEN dcy.strt_dt and dcy.end_dt     
+
+WHERE sls.OFFER_ID in (SELECT CAST(offer_id AS STRING) FROM `kohls-bda-mkt-prd.pm_active.amazon_offer_ids`)
+
+GROUP BY 1,2,3
+             
+UNION ALL
+             
+SELECT ecom_ord_nbr as mstr_trn_hdr_id
+,ecom_ord_dte as trn_sls_dte
+,TRIM(REPLACE(REGEXP_EXTRACT(promo_name,r'_OF_(.*?)(?: \(\.*|$|Gift Omni)'),'Returns','Return')) as grouped_promo_name
+,sum(MKTG_DISC_AMT) as MKTG_DISC_AMT   
+
+FROM `kohls-bda-mkt-prd.dp_marketing.det_ecom_demand_offer` sls
+INNER JOIN DATE_RANGE dcy
+ON sls.ecom_ord_dte BETWEEN dcy.strt_dt and dcy.end_dt           
+
+WHERE sls.PROMO_ID IN (SELECT offer_id FROM `kohls-bda-mkt-prd.pm_active.amazon_offer_ids`)
+
+GROUP BY 1,2 ,3 
+)
+,amzn_iss as (select  
+supc_isunc_loc_id as str_nbr
+,date(cred_tmst) as issued_dte
+,'N' as ecom_ind
+,0 as amz_ind
+,count(distinct sngl_use_promo_cde) as issued_cnt 
+
+from `kohls-bda-prd.dp_logistics.bqt_lgs_amzn_rets_supc` a 
+INNER JOIN date_range dcy
+ON date(a.cred_tmst) BETWEEN dcy.strt_dt and dcy.end_dt
+
+
+where trkg_id not in (select distinct trkg_id from `kohls-bda-prd.dp_logistics.bqt_lgs_amzn_rets_trkg_id_exclns`) 
+
+group by 1,2,3
+)
+,agg as (
+SELECT 
+sls.dmnd_dte,
+str_nbr,
+loc_nm,
+regn_nm,
+ecom_ind,
+case when ecom_ind = 'N' AND amzn.trn_sls_dte is null then 0 
+     when ecom_ind = 'Y' and amzn.mstr_trn_hdr_id is null then 0
+else 1 end as amz_ind,
+grouped_promo_name,
+count(distinct (sls.mstr_trn_hdr_id)) as TRAN_COUNT,      
+sum(sls.SLD_QTY) as SLD_QTY,      
+sum(sls.NET_CHRGD_AMT) as NET_CHRGD_AMT,    
+sum(sls.ntrl_mrgn_amt) as ntrl_mrgn_amt,
+SUM(sls.dmnd_mktg_mkdn_amt) as dmnd_mktg_mkdn_amt,
+sum(case when ofr.MKTG_DISC_AMT is null then 0 else ofr.MKTG_DISC_AMT end) as MKTG_DISC_AMT,      
+sum(case when amzn.MKTG_DISC_AMT is null then 0 else amzn.MKTG_DISC_AMT end) as AMZN_MKTG_DISC_AMT,
+SUM(dmnd_reg_rtl_pric_amt) dmnd_reg_rtl_pric_amt
+         
+from sls_temp sls   
+left join ofr_temp ofr    
+on sls.mstr_trn_hdr_id=ofr.mstr_trn_hdr_id      
+left join amzn_temp amzn
+ON amzn.mstr_trn_hdr_id=sls.mstr_trn_hdr_id 
+
+group by 1,2,3,4,5,6,7
+)
+
+SELECT a.dmnd_dte as Date,
+a.str_nbr,
+a.loc_nm,
+a.regn_nm,
+a.ecom_ind,
+a.amz_ind,  
+REPLACE(a.grouped_promo_name,'_',' ') grouped_promo_name,
+a.TRAN_COUNT,      
+a.SLD_QTY,      
+a.NET_CHRGD_AMT,    
+a.ntrl_mrgn_amt,
+a.dmnd_mktg_mkdn_amt,
+a.MKTG_DISC_AMT,      
+a.AMZN_MKTG_DISC_AMT,
+a.dmnd_reg_rtl_pric_amt,
+i.issued_cnt,
+i.str_nbr as issue_str_nbr
+
+FROM agg a
+LEFT JOIN amzn_iss i
+ON a.str_nbr = i.str_nbr
+AND a.dmnd_dte = i.issued_dte
+AND a.ecom_ind = i.ecom_ind
+and a.amz_ind= i.amz_ind
+
+;
+///$tab LY Data
+PO:
+NoConcatenate Load Distinct
+    [Date],
+    %Date,
+//     TY_DATE,
+    LY_DATE
+Resident
+	Amazon_RaaS_Data;
+    
+Left Join(PO)
+Load    Date as [LY_DATE],
+str_nbr,
+str_nbr & ' - ' & loc_nm as [Store Number - Name],
+regn_nm,
+ecom_ind,
+amz_ind, 
+grouped_promo_name,
+TRAN_COUNT as [TRAN_COUNT_PO],      
+SLD_QTY as [SLD_QTY_PO],      
+NET_CHRGD_AMT as [NET_CHRGD_AMT_PO],    
+ntrl_mrgn_amt as [ntrl_mrgn_amt_PO],
+dmnd_mktg_mkdn_amt as [dmnd_mktg_mkdn_amt_PO],
+MKTG_DISC_AMT as [MKTG_DISC_AMT_PO],      
+AMZN_MKTG_DISC_AMT as [AMZN_MKTG_DISC_AMT_PO],
+issued_cnt as [issued_cnt_PO],
+dmnd_reg_rtl_pric_amt as [DMND_REG_RTL_PRIC_AMT_PO]
+;
+
+SQL
+WITH date_range AS (
+SELECT MIN(tm_dim_ky_dte) strt_dt
+,MAX(tm_dim_ky_dte) end_dt
+
+FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal`
+
+WHERE CAST(fscl_yr_nbr as INT) >= (SELECT DISTINCT CAST(fscl_yr_nbr as INT)-2 FROM `kohls-bda-prd.dp_location.bqt_lgs_tm_cal` WHERE tm_dim_ky_dte = CURRENT_DATE())
+)
+,sls_temp as (
+select distinct CASE WHEN ecom_ind = 'N' THEN mstr_trn_hdr_id
+                                    WHEN ecom_ind = 'Y' THEN ord_nbr
+                                    ELSE 'N/A' END as mstr_trn_hdr_id ,  
+               dmnd_dte,
+					     agg.str_nbr,
+                         agg.loc_nm,
+                         CASE WHEN R.str_gp_nm IS NULL THEN 'NA' ELSE R.str_gp_nm END AS regn_nm,
+               ecom_ind,
+               sum(agg.dmnd_sld_qty) as SLD_QTY,    
+               sum(agg.dmnd_net_chrgd_amt) as NET_CHRGD_AMT,
+			   sum(agg.dmnd_ntrl_mrgn_amt) as ntrl_mrgn_amt,
+               SUM(agg.dmnd_mktg_mkdn_amt) as dmnd_mktg_mkdn_amt,
+               SUM(agg.dmnd_reg_rtl_pric_amt) as dmnd_reg_rtl_pric_amt
+               from `kohls-bda-prd.dp_marketing.bqt_sls_cust_agg` agg
+               INNER JOIN `kohls-bda-mkt-prd.dp_marketing_sandbox.det_po_cal_dim` cal
+               ON agg.dmnd_dte = cal.Krista_PO_Dates
+               INNER JOIN DATE_RANGE dcy
+               ON cal.TY_DATE BETWEEN dcy.strt_dt and dcy.end_dt   
+               LEFT JOIN `kohls-bda-prd.dp_location.bqv_lgs_c_geo_clustr_dim` r
+				ON agg.str_nbr = r.str_nbr
+               where agg.TRN_TYP_CDE in ('01','02')
+
+               group by 1,2,3,4,5,6
+)
+,ofr_temp as (
+select mstr_trn_hdr_id, sum(MKTG_DISC_AMT) as MKTG_DISC_AMT,  count(distinct OFFER_ID) as OFFER_COUNT      
+                from `kohls-bda-mkt-prd.dp_marketing.det_store_demand_offer` ofr
+                group by 1
+                  
+                UNION ALL
+                  
+                select ecom_ord_nbr as mstr_trn_hdr_id, sum(MKTG_DISC_AMT) as MKTG_DISC_AMT,  count(distinct PROMO_ID) as OFFER_COUNT      
+                from `kohls-bda-mkt-prd.dp_marketing.det_ecom_demand_offer` ofr
+                group by 1  
+)
+,amzn_temp as (
+SELECT mstr_trn_hdr_id
+,trn_sls_dte
+,TRIM(REPLACE(REGEXP_EXTRACT(promo_name,r'_OF_(.*?)(?: \(\.*|$|Gift Omni)'),'Returns','Return'))as grouped_promo_name
+,sum(MKTG_DISC_AMT) as MKTG_DISC_AMT    
+
+FROM `kohls-bda-mkt-prd.dp_marketing.det_store_demand_offer` sls      
+               INNER JOIN `kohls-bda-mkt-prd.dp_marketing_sandbox.det_po_cal_dim` cal
+               ON sls.trn_sls_dte = cal.Krista_PO_Dates
+               INNER JOIN DATE_RANGE dcy
+               ON TY_Date BETWEEN dcy.strt_dt and dcy.end_dt   
+
+WHERE sls.OFFER_ID in (SELECT CAST(offer_id AS STRING) FROM `kohls-bda-mkt-prd.pm_active.amazon_offer_ids`)
+
+GROUP BY 1,2,3
+             
+UNION ALL
+             
+SELECT ecom_ord_nbr as mstr_trn_hdr_id
+,ecom_ord_dte as trn_sls_dte
+,TRIM(REPLACE(REGEXP_EXTRACT(promo_name,r'_OF_(.*?)(?: \(\.*|$|Gift Omni)'),'Returns','Return')) as grouped_promo_name
+,sum(MKTG_DISC_AMT) as MKTG_DISC_AMT   
+
+FROM `kohls-bda-mkt-prd.dp_marketing.det_ecom_demand_offer` sls
+               INNER JOIN `kohls-bda-mkt-prd.dp_marketing_sandbox.det_po_cal_dim` cal
+               ON sls.ecom_ord_dte = cal.Krista_PO_Dates
+               INNER JOIN DATE_RANGE dcy
+               ON TY_Date BETWEEN dcy.strt_dt and dcy.end_dt         
+
+WHERE sls.PROMO_ID IN (SELECT offer_id FROM `kohls-bda-mkt-prd.pm_active.amazon_offer_ids`)
+
+GROUP BY 1,2 ,3 
+)
+,amzn_iss as (select  
+supc_isunc_loc_id as str_nbr
+,date(cred_tmst) as issued_dte
+// ,p.grouped_promo_name
+,'N' as ecom_ind
+,0 as amz_ind
+,count(distinct sngl_use_promo_cde) as issued_cnt 
+
+from `kohls-bda-prd.dp_logistics.bqt_lgs_amzn_rets_supc` a 
+INNER JOIN `kohls-bda-mkt-prd.dp_marketing_sandbox.det_po_cal_dim` cal
+ON date(cred_tmst) = cal.Krista_PO_Dates
+INNER JOIN date_range dcy
+ON date(a.cred_tmst) BETWEEN dcy.strt_dt and dcy.end_dt
+// LEFT JOIN (SELECT DISTINCT CAST(OFFER_ID as string) as promo_id,TRIM(REPLACE(REGEXP_EXTRACT(promo_name,r'_OF_(.*?)(?: \(\.*|$|Gift Omni)'),'Returns','Return')) as grouped_promo_name  
+// 		   FROM `kohls-bda-mkt-prd.dp_marketing.det_store_demand_offer`
+// 		   UNION ALL
+//            SELECT  DISTINCT CAST(promo_id as STRING) as promo_id,TRIM(REPLACE(REGEXP_EXTRACT(promo_name,r'_OF_(.*?)(?: \(\.*|$|Gift Omni)'),'Returns','Return')) as grouped_promo_name 
+//            FROM `kohls-bda-mkt-prd.dp_marketing.det_ecom_demand_offer`) p
+// ON a.ofr_id = p.promo_id     
+
+where trkg_id not in (select distinct trkg_id from `kohls-bda-prd.dp_logistics.bqt_lgs_amzn_rets_trkg_id_exclns`) 
+
+group by 1,2,3
+)
+,agg as (
+SELECT 
+sls.dmnd_dte,
+str_nbr,
+loc_nm,
+regn_nm,
+ecom_ind,
+case when ecom_ind = 'N' AND amzn.trn_sls_dte is null then 0 
+     when ecom_ind = 'Y' and amzn.mstr_trn_hdr_id is null then 0
+else 1 end as amz_ind,
+grouped_promo_name,
+count(distinct (sls.mstr_trn_hdr_id)) as TRAN_COUNT,      
+sum(sls.SLD_QTY) as SLD_QTY,      
+sum(sls.NET_CHRGD_AMT) as NET_CHRGD_AMT,    
+sum(sls.ntrl_mrgn_amt) as ntrl_mrgn_amt,
+SUM(sls.dmnd_mktg_mkdn_amt) as dmnd_mktg_mkdn_amt,
+SUM(sls.dmnd_reg_rtl_pric_amt) as dmnd_reg_rtl_pric_amt,
+sum(case when ofr.MKTG_DISC_AMT is null then 0 else ofr.MKTG_DISC_AMT end) as MKTG_DISC_AMT,      
+sum(case when amzn.MKTG_DISC_AMT is null then 0 else amzn.MKTG_DISC_AMT end) as AMZN_MKTG_DISC_AMT
+         
+from sls_temp sls   
+left join ofr_temp ofr    
+on sls.mstr_trn_hdr_id=ofr.mstr_trn_hdr_id      
+left join amzn_temp amzn
+ON amzn.mstr_trn_hdr_id=sls.mstr_trn_hdr_id 
+
+group by 1,2,3,4,5,6,7
+)
+
+SELECT a.dmnd_dte as Date,
+a.str_nbr,
+a.loc_nm,
+a.regn_nm,
+a.ecom_ind,
+a.amz_ind,  
+REPLACE(a.grouped_promo_name,'_',' ') grouped_promo_name,
+a.TRAN_COUNT,      
+a.SLD_QTY,      
+a.NET_CHRGD_AMT,    
+a.ntrl_mrgn_amt,
+a.dmnd_mktg_mkdn_amt,
+a.MKTG_DISC_AMT,      
+a.AMZN_MKTG_DISC_AMT,
+a.dmnd_reg_rtl_pric_amt,
+i.issued_cnt,
+i.str_nbr as issue_str_nbr
+
+FROM agg a
+LEFT JOIN amzn_iss i
+ON a.str_nbr = i.str_nbr
+AND a.dmnd_dte = i.issued_dte
+AND a.ecom_ind = i.ecom_ind
+and a.amz_ind= i.amz_ind
+
+;
+
+Concatenate(Amazon_RaaS_Data)
+Load
+    str_nbr&'|'&Date as %Key_1, 
+	*
+Resident
+	PO
+;
+    
+Drop Table PO;
+
+Concatenate(StoreLink)
+Load  %Key_1,
+str_nbr as %Store,
+[%Date]
+Resident Amazon_RaaS_Data;
+
+drop Field [%Date], Date from Amazon_RaaS_Data;
+
+vMinPODate=;vMaxPODate=;
+///$tab Dimensions
+Store:
+LOAD
+    %LOC as %Store,
+    %LOC as "Store ID",
+    "Store Name",
+    "Store Description",
+    "Region Name",
+    "District Name",
+    "Territory Description",
+    "Territory Number"
+FROM   [$(vRepoBasePath)/prepared/locations/location.qvd]
+//[lib://prd-repository:DataFiles/Location.qvd]
+(qvd) where Exists(%Store,%LOC);
+
+
+
+DistrubutionCenter:
+LOAD
+    %LOC,
+//    %LOC as "Distrubution Center ID",
+    "Store Name" as "Distrubution Center Description"
+FROM  [$(vRepoBasePath)/prepared/locations/location.qvd]
+//[lib://prd-repository:DataFiles/Location.qvd]
+(qvd) where Exists( %LOC);
+
+Calendar:
+LOAD
+    "Date" as %Date ,
+    "Fiscal Year",
+    "Date" ,
+    "Fiscal Month",
+    "Fiscal Month Name",
+    "Fiscal Qtr",
+    "Fiscal Week",
+    "Season Description",
+    "Fiscal Year - Month",
+    "Fiscal Year - Week",
+    "Fiscal Year - Quarter"
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd]
+(qvd) where Exists(%Date, Date);
+///$tab Exit Script
+exit script;
+///$tab As of Dates
+AsOfDate:
+LOAD Distinct
+    Start_YTD_TY,
+    End_YTD_TY,
+    Start_MTD_TY,
+    End_MTD_TY,
+    Start_QTD_TY,
+    End_QTD_TY,
+    Start_DAY_TY,
+    End_DAY_TY,
+    "Fiscal Year - Month",
+    MTD_Week_Counter,
+    "Date" as AsOfDate
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd]
+(qvd)Where Date< MonthEnd(Today(1),2) and Date>(AddYears(Today(1),-2));
+SET vDAY_Start = "=Max(Start_DAY_TY)";
+SET vYTD_Start = "=Max(Start_YTD_TY)";
+SET vQTD_Start = "=Max(Start_QTD_TY)";
+SET vMTD_Start = "=Max(Start_MTD_TY)";
+SET vDAY_End = "=Max(End_DAY_TY)";
+SET vYTD_End = "=Max(End_YTD_TY)";
+SET vQTD_End = "=Max(End_QTD_TY)";
+SET vMTD_End = "=Max(End_MTD_TY)";
+
+
+
+
+Left Join (AsOfDate)
+LOAD
+    "Fiscal Year - Month",
+     date(min(Date)) as min_dte,
+     date(max(Date)) as max_dte
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd](qvd)
+WHERE  Date< MonthEnd(Today(1),2)and Date>(AddYears(Today(1),-2))
+
+//WHERE  Date< MonthEnd(Today(1),2)and Date>(AddYears(Today(1),-2))
+     
+GROUP BY  "Fiscal Year - Month";
+
+SET vMonth_Start = "=Min(min_dte)";
+SET vMonth_End = "=Max(max_dte)";AsOfDate:
+LOAD Distinct
+    Start_YTD_TY,
+    End_YTD_TY,
+    Start_MTD_TY,
+    End_MTD_TY,
+    Start_QTD_TY,
+    End_QTD_TY,
+    Start_DAY_TY,
+    End_DAY_TY,
+    "Fiscal Year - Month",
+    MTD_Week_Counter,
+    "Date" as AsOfDate
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd]
+(qvd)Where Date< MonthEnd(Today(1),2) and Date>(AddYears(Today(1),-2));
+SET vDAY_Start = "=Max(Start_DAY_TY)";
+SET vYTD_Start = "=Max(Start_YTD_TY)";
+SET vQTD_Start = "=Max(Start_QTD_TY)";
+SET vMTD_Start = "=Max(Start_MTD_TY)";
+SET vDAY_End = "=Max(End_DAY_TY)";
+SET vYTD_End = "=Max(End_YTD_TY)";
+SET vQTD_End = "=Max(End_QTD_TY)";
+SET vMTD_End = "=Max(End_MTD_TY)";
+
+
+
+
+Left Join (AsOfDate)
+LOAD
+    "Fiscal Year - Month",
+     date(min(Date)) as min_dte,
+     date(max(Date)) as max_dte
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd](qvd)
+WHERE  Date< MonthEnd(Today(1),2)and Date>(AddYears(Today(1),-2))
+
+//WHERE  Date< MonthEnd(Today(1),2)and Date>(AddYears(Today(1),-2))
+     
+GROUP BY  "Fiscal Year - Month";
+
+SET vMonth_Start = "=Min(min_dte)";
+SET vMonth_End = "=Max(max_dte)";
+
+
+WEEK_MAP:
+MAPPING Load
+
+AsOfDate,
+MTD_Week_Counter
+
+RESIDENT AsOfDate;
+
+
+ComparisonDate:
+LOAD Distinct
+    Start_DAY_TY as Start_DAY_Comp,
+    End_DAY_TY as End_DAY_Comp,
+    Start_MTD_TY as Start_MTD_Comp,
+    End_MTD_TY as End_MTD_Comp,
+    Start_QTD_TY as Start_QTD_Comp,
+    End_QTD_TY as End_QTD_Comp,
+    Start_YTD_TY as Start_YTD_Comp,
+    End_YTD_TY as End_YTD_Comp,
+    "Date" as ComparisonDate
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd]
+(qvd)Where Date<Today(1) and Date>(AddYears(Today(1),-2));
+SET vDAY_Start_Comp = "=Max(Start_DAY_Comp)";
+SET vYTD_Start_Comp = "=Max(Start_YTD_Comp)";
+SET vQTD_Start_Comp = "=Max(Start_QTD_Comp)";
+SET vMTD_Start_Comp = "=Max(Start_MTD_Comp)";
+SET vDAY_End_Comp = "=Max(End_DAY_Comp)";
+SET vYTD_End_Comp = "=Max(End_YTD_Comp)";
+SET vQTD_End_Comp = "=Max(End_QTD_Comp)";
+SET vMTD_End_Comp = "=Max(End_MTD_Comp)";
+
+
+
+
+ComparisonDate:
+LOAD Distinct
+    Start_DAY_TY as Start_DAY_Comp,
+    End_DAY_TY as End_DAY_Comp,
+    Start_MTD_TY as Start_MTD_Comp,
+    End_MTD_TY as End_MTD_Comp,
+    Start_QTD_TY as Start_QTD_Comp,
+    End_QTD_TY as End_QTD_Comp,
+    Start_YTD_TY as Start_YTD_Comp,
+    End_YTD_TY as End_YTD_Comp,
+    "Date" as ComparisonDate
+FROM [lib://Repository:DataFiles/FiscalCalendar.qvd]
+(qvd)Where Date<Today(1) and Date>(AddYears(Today(1),-2));
+SET vDAY_Start_Comp = "=Max(Start_DAY_Comp)";
+SET vYTD_Start_Comp = "=Max(Start_YTD_Comp)";
+SET vQTD_Start_Comp = "=Max(Start_QTD_Comp)";
+SET vMTD_Start_Comp = "=Max(Start_MTD_Comp)";
+SET vDAY_End_Comp = "=Max(End_DAY_Comp)";
+SET vYTD_End_Comp = "=Max(End_YTD_Comp)";
+SET vQTD_End_Comp = "=Max(End_QTD_Comp)";
+SET vMTD_End_Comp = "=Max(End_MTD_Comp)";
