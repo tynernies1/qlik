@@ -3,7 +3,7 @@ SET ThousandSep=',';
 SET DecimalSep='.';
 SET MoneyThousandSep=',';
 SET MoneyDecimalSep='.';
-SET MoneyFormat='$#,##0.00;-$#,##0.00';
+SET MoneyFormat='$ ###0.00;-$ ###0.00';
 SET TimeFormat='h:mm:ss TT';
 SET DateFormat='M/D/YYYY';
 SET TimestampFormat='M/D/YYYY h:mm:ss[.fff] TT';
@@ -18,166 +18,94 @@ SET LongMonthNames='January;February;March;April;May;June;July;August;September;
 SET DayNames='Mon;Tue;Wed;Thu;Fri;Sat;Sun';
 SET LongDayNames='Monday;Tuesday;Wednesday;Thursday;Friday;Saturday;Sunday';
 SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
-///$tab Extract
-LIB CONNECT TO 'Repository:Google_BQ-BDA';
-Qualify *;
 
-VitalTables:
-SQL
-select
-  concat(table_catalog, '.', table_schema, '.', table_name) as table_id,
-  case
-    when concat(table_catalog, '.', table_schema, '.', table_name) = 'kohls-bda-prd.dp_logistics.bqt_lgs_raas_rpt' then
-      format_timestamp(
-        '%Y-%m-%d %H:%M:%S',
-        timestamp(
-          safe_cast(
-            regexp_replace(
-              regexp_extract(
-                option_value,
-                r'STRUCT\("last-load-ct", "([^"]+?)"\)'
-              ),
-              '_',
-              ':'
-            ) as datetime
-          ),
-          'America/Chicago'
-        ),
-        'UTC'
-      )
-  end as last_modified,
-  case
-    when concat(table_catalog, '.', table_schema, '.', table_name) = 'kohls-bda-prd.dp_logistics.bqt_lgs_raas_rpt' then
-      if(
-        timestamp(
-          safe_cast(
-            regexp_replace(
-              regexp_extract(
-                option_value,
-                r'STRUCT\("last-load-ct", "([^"]+?)"\)'
-              ),
-              '_',
-              ':'
-            ) as datetime
-          ),
-          'America/Chicago'
-        ) > timestamp('$(vLastReloaded)'),
-        1,
-        0
-      )
-  end as is_updated
-from
-  `kohls-bda-prd.region-us.INFORMATION_SCHEMA.TABLE_OPTIONS`
-where
-  option_name = 'labels'
-  and concat(table_catalog, '.', table_schema, '.', table_name) in (
-    'kohls-bda-prd.dp_logistics.bqt_lgs_raas_rpt'
-  );
-
-Unqualify *;
-
-
-Trace App last reloaded $(vLastReloaded) UTC;
-For r = 0 to NoOfRows('VitalTables') - 1
-	Let vTableId = Peek('VitalTables.table_id', $(r), 'VitalTables');
-    Let vLastModified = Peek('VitalTables.last_modified', $(r), 'VitalTables');
-    Trace $(vTableId) last updated $(vLastModified) UTC;
-Next r;
-VitalTableCounts:
-Load
-	Sum(VitalTables.is_updated) as vital_updated,
-    Count(VitalTables.is_updated) as vital_expected
-Resident
-	VitalTables;
-Let vUpdatedVitalTables = FieldValue('vital_updated', 1);
-Let vExpectedVitalTables = FieldValue('vital_expected', 1);
-Trace Vital BQ tables updated: $(vUpdatedVitalTables) of $(vExpectedVitalTables);
-If vUpdatedVitalTables = vExpectedVitalTables Then
-    $(Must_Include=lib://Repository:Google_Cloud_Storage-Qlik/enterprise/subroutines/s_trigger_reload.txt);
-    Set ErrorMode = 0;
-    //Call s_trigger_reload('384f7346-19af-4258-967f-f0fe366775dd', 'Repository:REST_Trigger_Reload', 'Repository:DataFiles');
-////Managed space version of app change, switch to this version before publishing.    
-	Call s_trigger_reload('774d5871-dff8-4130-bb9d-23530cd70667', 'Repository:REST_Trigger_Reload', 'Repository:DataFiles');
-    
-    If ScriptError = 0 Then 
-    	Let vLastReloaded = Timestamp(UTC(), 'YYYY-MM-DD hh:mm:ss');
-    	Trace Target app successfully reloaded;
-    Else 
-    	Trace Target app failed to reloaded due to s_trigger_reload failing;
-    End If
-    Set ErrorMode = 1;
-Else 
-	Trace Dependencies not all met, skipping reload;
-End If
-///$tab Exit 
-Exit Script;
 ///$tab Section
-LIB CONNECT TO 'Repository:Google_BQ-BDA';
+LIB CONNECT TO 'Repository:Google_BQ-BDA'; 
 
+LOAD
+*
+;
 
-Qualify *;
-VitalTables:
 SQL
+with
+PHY_INV_VARN_FCT
+as
+(
+select 
+	inv_cyc_id
+	, loc_nbr
+	, sku_nbr
+	, vnd_id
+	, tm.fscl_yr_nbr
+	, tm.fscl_mn_id
+	, varn_dte
+	, cnt_off_qty as ctoff_qty
+	, ovrg_qty
+	, shtg_qty
+	, actl_cnt_off_qty
+	, actl_shtg_qty
+	, actl_ovrg_qty
+from 
+	kohls-bda-prd.dp_merchandising.bqt_mdsg_inv_varn varn
+		inner join kohls-bda-prd.dp_location.bqv_c_tm_dim tm
+			on varn.varn_dte = tm.tm_dim_ky_dte
+where  
+	varn.expir_dte = "9999-12-31"
+)
+,
+WHSE_STR_ASGMT_DIM
+as
+(
 select
-  concat(project_id, '.', dataset_id, '.', table_id) as table_id,
-  format_timestamp('%Y-%m-%d %H:%M:%S', timestamp_millis(last_modified_time), 'UTC') as last_modified,
-  case when timestamp_millis(last_modified_time) > timestamp('$(vLastReloaded)') then 1 else 0 end as is_updated
-from
-  `kohls-bda-prd.dp_store`.__TABLES__
-where
-  table_id in (
-    'bqt_lgs_raas_rpt'
-//   )
-// union all
-// select
-//   concat(project_id, '.', dataset_id, '.', table_id) as table_id,
-//   format_timestamp('%Y-%m-%d %H:%M:%S', timestamp_millis(last_modified_time), 'UTC') as last_modified,
-//   case when timestamp_millis(last_modified_time) > timestamp('$(vLastReloaded)') then 1 else 0 end as is_updated
-// from
-//   `kohls-bda-prd.dp_location`.__TABLES__
-// where
-//   table_id in (
-//     'bqt_lgs_loc_dim','bqt_lgs_dist','bqt_lgs_terr'
-//   )
-// union all
-// select
-//   concat(project_id, '.', dataset_id, '.', table_id) as table_id,
-//   format_timestamp('%Y-%m-%d %H:%M:%S', timestamp_millis(last_modified_time), 'UTC') as last_modified,
-//   case when timestamp_millis(last_modified_time) > timestamp('$(vLastReloaded)') then 1 else 0 end as is_updated
-// from
-//   `kohls-bda-prd.dp_sales`.__TABLES__
-// where
-//   table_id in (
-//     'bqt_sls_vrfd_trn',
-//     'bqt_fin_sls_trn_msg'
-  );
-Unqualify *;
-Trace App last reloaded $(vLastReloaded) UTC;
-For r = 0 to NoOfRows('VitalTables') - 1
-	Let vTableId = Peek('VitalTables.table_id', $(r), 'VitalTables');
-    Let vLastModified = Peek('VitalTables.last_modified', $(r), 'VitalTables');
-    Trace $(vTableId) last updated $(vLastModified) UTC;
-Next r;
-VitalTableCounts:
-Load
-	Sum(VitalTables.is_updated) as vital_updated,
-    Count(VitalTables.is_updated) as vital_expected
-Resident
-	VitalTables;
-Let vUpdatedVitalTables = FieldValue('vital_updated', 1);
-Let vExpectedVitalTables = FieldValue('vital_expected', 1);
-Trace Vital BQ tables updated: $(vUpdatedVitalTables) of $(vExpectedVitalTables);
-If vUpdatedVitalTables = vExpectedVitalTables Then
-    $(Must_Include=lib://Repository:Google_Cloud_Storage-Qlik/enterprise/subroutines/s_trigger_reload.txt);
-    Set ErrorMode = 0;
-    Call s_trigger_reload('fb323378-e705-4c67-a7f6-44159e2ea85a', 'Repository:REST_Trigger_Reload', 'Repository:DataFiles');
-    If ScriptError = 0 Then 
-    	Let vLastReloaded = Timestamp(UTC(), 'YYYY-MM-DD hh:mm:ss');
-    	Trace Target app successfully reloaded;
-    Else 
-    	Trace Target app failed to reloaded due to s_trigger_reload failing;
-    End If
-    Set ErrorMode = 1;
-Else 
-	Trace Dependencies not all met, skipping reload;
-End If
+  b.loc_nbr
+, b.dc_nbr as whse_id
+, a.loc_nm as whse_nm
+, a.loc_10_abbr_nm as loc_10_abbr_nm
+, a.loc_5_abbr_nm as loc_5_abbr_nm
+, a.tmzn_cde as tmzn_cde
+, a.loc_opn_dte as loc_opn_dte
+, a.loc_ocpnc_dte as loc_ocpnc_dte
+, a.loc_clo_dte as loc_clo_dte
+from `kohls-bda-prd.dp_location.bqt_lgs_loc` a
+  inner join `kohls-bda-prd.dp_location.bqt_lgs_dc_loc_asgmt` b
+    on a.loc_nbr = b.dc_nbr
+where loc_typ_cde IN ('DC','NA')
+  and a.expir_dte="9999-12-31"
+  and b.expir_dte="9999-12-31"
+)
+
+select	
+  a13.DEPT_NBR  DEPT_NBR,
+	max(a16.DEPT_NM)  DEPT_NM,
+	a11.SKU_NBR  SKU_NBR,
+	max(a13.SKU_NBR)  SKU_NBR,
+	max(a13.SKU_DESC)  SKU_DESC,
+	a14.WHSE_ID  LOC_ID,
+	max(a14.WHSE_NM)  LOC_NM,
+	a11.LOC_NBR  EI_STR_ID,
+	max(a15.LOC_NM)  LOC_NM0,
+--	max(a15.LOC_ID)  STR_ID,
+	a12.FSCL_MN_ID  FSCL_MN_ID,
+	max(trim(a12.FSCL_MN_NM))  FSCL_MN_NM,
+	sum(a11.ACTL_SHTG_QTY)  ACT_SHTG_QTY,
+	sum(a11.ACTL_OVRG_QTY)  ACT_OVRG_QTY
+from	PHY_INV_VARN_FCT	a11
+	join	kohls-bda-prd.dp_location.bqt_lgs_tm_cal	a12
+	  on 	(a11.VARN_DTE = a12.TM_DIM_KY_DTE)
+	join	kohls-bda-prd.dp_merchandising.bqt_mdsg_c_sku_dim	a13
+	  on 	(a11.SKU_NBR = a13.SKU_NBR)
+	join	WHSE_STR_ASGMT_DIM	a14
+	  on 	(a11.LOC_NBR = a14.LOC_NBR)
+	join	kohls-bda-prd.dp_location.bqv_c_loc_dim	a15
+	  on 	(a11.LOC_NBR = a15.LOC_NBR)
+	join	kohls-bda-prd.dp_merchandising.bqv_mdsg_c_dept	a16
+	  on 	(a13.DEPT_NBR = a16.DEPT_NBR)
+where	
+	a11.SKU_NBR IN (46603538,46603537,46603536,46603535)
+	and	a14.WHSE_ID in (830, 810, 840)
+	and a12.FSCL_MN_ID in (202302, 202303, 202304, 202305, 202306, 202307, 202308, 202309)
+group by	a13.DEPT_NBR,
+	a11.SKU_NBR,
+	a14.WHSE_ID,
+	a11.LOC_NBR,
+	a12.FSCL_MN_ID
