@@ -1,7 +1,9 @@
 
 SHEETS
+{"qInfo":{"qId":"RVYXea","qType":"sheet"},"qMeta":{"title":"USA Query","description":"","_resourcetype":"app.object","_objecttype":"sheet","id":"RVYXea","approved":false,"published":true,"owner":"okta\\TKA15OF@cp.ad.kohls.com","ownerId":"62d99c486ce5c20255fb1424","createdDate":"2024-02-08T14:46:49.064Z","modifiedDate":"2024-02-08T16:29:33.483Z","publishTime":"2024-02-08T16:29:33.483Z","privileges":["read","publish"]},"qData":[]}
 
 OBJECTS ON SHEETS
+{"bounds":{"x":0,"y":0,"width":100,"height":100},"col":0,"colspan":24,"name":"XUnaDfc","row":0,"rowspan":12,"smartGrid":{"rowIdx":0,"itemIdx":0,"item":{"width":1}},"type":"pivot-table"}
 
 DIMENSIONS
 
