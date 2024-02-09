@@ -1,0 +1,375 @@
+///$tab Main
+SET ThousandSep=',';
+SET DecimalSep='.';
+SET MoneyThousandSep=',';
+SET MoneyDecimalSep='.';
+SET MoneyFormat='$#,##0.00;-$#,##0.00';
+SET TimeFormat='h:mm:ss TT';
+SET DateFormat='M/D/YYYY';
+SET TimestampFormat='M/D/YYYY h:mm:ss[.fff] TT';
+SET FirstWeekDay=6;
+SET BrokenWeeks=1;
+SET ReferenceDay=0;
+SET FirstMonthOfYear=1;
+SET CollationLocale='en-US';
+SET CreateSearchIndexOnReload=1;
+SET MonthNames='Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec';
+SET LongMonthNames='January;February;March;April;May;June;July;August;September;October;November;December';
+SET DayNames='Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+SET LongDayNames='Monday;Tuesday;Wednesday;Thursday;Friday;Saturday;Sunday';
+SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
+
+$(Must_Include=lib://prd-repository:gcs_qlik/foundation/bi/enterprise-v2/subroutines/s_environment_var.txt);
+$(Must_Include=lib://$(vEnv)-repository:gcs_qlik/foundation/bi/enterprise-v2/apps/qvf_inventory_management.txt);
+
+DimensionsSelector:
+LOAD * INLINE [
+DimensionsSelector
+GM
+Buyer
+Department
+Store Grade
+Territory
+District
+Store
+Climate
+Opening Date
+];
+
+Exit Script;
+///$tab SCRIPT
+Fact:
+LOAD
+    *
+FROM [lib://$(vEnv)-repository:DataFiles/merch_hier_inventory_sales_*.qvd]
+(qvd);
+
+FiscalCalendar:
+LOAD
+    Date("Date",'YYYY-MM-DD') as as_of_dte,
+    Date("LY Date",'YYYY-MM-DD') as as_of_dte_ly,  
+    '7' as wtd_days,
+    '28' as l4w_days,
+    '56' as l8w_days,
+    '91' as l13w_days,
+    '182' as l26w_days,
+    '364' as l52w_days, 
+    '1' as wtd_weeks,
+    '4' as l4w_weeks,
+    '8' as l8w_weeks,
+    '13' as l13w_weeks,
+    '26' as l26w_weeks,
+    '52' as l52w_weeks
+FROM [lib://$(vEnv)-repository:DataFiles/FiscalCalendar.qvd]
+(qvd)Where Exists(as_of_dte,"Date");
+
+Left Join(FiscalCalendar)
+LOAD as_of_dte,
+ 	 RecNo() as as_of_dte_sort
+Resident FiscalCalendar
+order by as_of_dte desc;
+
+Location:
+Inner Keep(Fact)
+LOAD
+    %LOC,
+    "Store Description",
+    "City Code",
+    "Country Code",
+    "Location Close Date",
+    "Location Open Date",
+    "Location Type Code",
+    "Sales Include Code",
+    "Postal Code",
+    "B&M Store Indicator",
+    "E Bus Indicator",
+    "Ecommerce Location Indicator",
+    "State Code",
+    "Store Name",
+    "Territory Description",
+    "Territory Number",
+    "Region Number",
+    "District Number",
+    "Location Number",
+    "Territory Name",
+    "Territory Manager Name",
+    "Region Name",
+    "Region Manager Name",
+    "District Description",
+    "District Name",
+    "District Manager Name",
+    "Store Manager Name",
+    "Climate Attribution",
+    Longitude,
+    Latitude,
+    Sephora_flag
+FROM [lib://$(vEnv)-repository:DataFiles/Location.qvd]
+(qvd)Where Exists(%LOC) and "Location Open Indicator"='Y' AND "Territory Name"<>'N/A';
+
+temp:
+NoConcatenate
+LOAD distinct %LOC,"Location Open Date" Resident Location;
+
+Left join(temp)
+LOAD distinct as_of_dte, as_of_dte_ly Resident FiscalCalendar;
+
+Left Join(Fact)
+LOAD %LOC, as_of_dte,
+    If(Date#("Location Open Date",'YYY-MM-DD') <= as_of_dte,'Y','N') as "Location Open Indicator",
+    If(Date#("Location Open Date",'YYY-MM-DD') <= as_of_dte_ly,'Y','N') as "Location Open Indicator LY"
+Resident temp;
+
+Drop table temp;
+
+LIB CONNECT TO '$(vEnv)-repository:bq_qlik';
+
+[maj_cl]:
+Left Keep(Fact)
+LOAD dept_nbr&'|'&maj_cl_nbr as %MAJ_CL,
+	 maj_cl_nbr&' - '&maj_cl_nm as "Major Class";
+SELECT `dept_nbr`,
+	`maj_cl_nbr`,
+	`maj_cl_nm`
+FROM `kohls-bda-prd`.`dp_merchandising`.`bqth_mdsg_maj_cl`
+WHERE `eff_dte`<= CURRENT_DATE() and `expir_dte`>=CURRENT_DATE();
+
+[dept]:
+Left Keep(Fact)
+LOAD dept_nbr as %DEPT,
+	 dept_nbr&' - '&dept_nm as Department,
+	 dma_nbr&' - '&dma_nm as Category,
+	 gma_nbr&' - '&gma_nm as GM,
+     bus_gp_nbr&' - '&bus_gp_desc as "Business Group",
+     byr_nbr&' - '&byng_offc_desc as Buyer,
+     if(dma_nbr='50','Y','N') as "Sephora Indicator";
+SELECT `dept_nbr`,
+	`dept_nm`,
+	`dma_nbr`,
+	`dma_nm`,
+	`gma_nbr`,
+	`gma_nm`,
+	`bus_gp_nbr`,
+	`bus_gp_desc`,
+	`bus_area_id`,
+	`bus_area_desc`,
+	`byr_nbr`,
+	`byng_offc_desc`
+FROM `kohls-bda-prd`.`dp_merchandising`.`bqth_mdsg_dept`
+WHERE `eff_dte`<= CURRENT_DATE() and `expir_dte`>=CURRENT_DATE();
+
+itm_stat_desc_grp:
+LOAD * INLINE [
+itm_stat_desc, itm_stat_desc_grp
+Regular, Total
+Clearance, Total
+Regular, Regular
+Clearance, Clearance
+];
+
+replenishableorallocated_grp:
+LOAD * INLINE [
+rplnt_ind, replenishableorallocated_grp
+Y, Total
+N, Total
+Y, Replen
+N, Alloc
+];
+
+sephoraindicator_grp:
+LOAD * INLINE [
+Sephora Indicator, sephoraindicator_grp
+Y, Include Sephora
+N, Include Sephora
+Y, Only Sephora
+N, Exclude Sephora
+];
+
+channel_grp:
+LOAD * INLINE [
+ecom_ind, channel_grp
+Y, Digital
+N, Store
+Y, Omni
+N, Omni
+];
+
+assortment_age_grp:
+LOAD * INLINE [
+Assortment_Age, assortment_age_grp
+0-30, 0-90
+31-60, 0-90
+61-90, 0-90
+91-120, 91-180
+121-150, 91-180
+151-180, 90-180
+181+, 181+
+];
+///$tab Section
+Fact:
+LOAD
+    *
+FROM [lib://$(vEnv)-repository:DataFiles/merch_hier_inventory_sales_*.qvd]
+(qvd);
+
+FiscalCalendar:
+LOAD
+    Date("Date",'YYYY-MM-DD') as as_of_dte,
+    Date("LY Date",'YYYY-MM-DD') as as_of_dte_ly,  
+    '7' as wtd_days,
+    '28' as l4w_days,
+    '56' as l8w_days,
+    '91' as l13w_days,
+    '182' as l26w_days,
+    '364' as l52w_days, 
+    '1' as wtd_weeks,
+    '4' as l4w_weeks,
+    '8' as l8w_weeks,
+    '13' as l13w_weeks,
+    '26' as l26w_weeks,
+    '52' as l52w_weeks
+FROM [lib://$(vEnv)-repository:DataFiles/FiscalCalendar.qvd]
+(qvd)Where Exists(as_of_dte,"Date");
+
+Left Join(FiscalCalendar)
+LOAD as_of_dte,
+ 	 RecNo() as as_of_dte_sort
+Resident FiscalCalendar
+order by as_of_dte desc;
+
+Location:
+Inner Keep(Fact)
+LOAD
+    %LOC,
+    "Store Description",
+    "City Code",
+    "Country Code",
+    "Location Close Date",
+    "Location Open Date",
+    "Location Type Code",
+    "Sales Include Code",
+    "Postal Code",
+    "B&M Store Indicator",
+    "E Bus Indicator",
+    "Ecommerce Location Indicator",
+    "State Code",
+    "Store Name",
+    "Territory Description",
+    "Territory Number",
+    "Region Number",
+    "District Number",
+    "Location Number",
+    "Territory Name",
+    "Territory Manager Name",
+    "Region Name",
+    "Region Manager Name",
+    "District Description",
+    "District Name",
+    "District Manager Name",
+    "Store Manager Name",
+    "Climate Attribution",
+    Longitude,
+    Latitude,
+    Sephora_flag
+FROM [lib://$(vEnv)-repository:DataFiles/Location.qvd]
+(qvd)Where Exists(%LOC) and "Location Open Indicator"='Y' AND "Territory Name"<>'N/A';
+
+temp:
+NoConcatenate
+LOAD distinct %LOC,"Location Open Date" Resident Location;
+
+Left join(temp)
+LOAD distinct as_of_dte, as_of_dte_ly Resident FiscalCalendar;
+
+Left Join(Fact)
+LOAD %LOC, as_of_dte,
+    If(Date#("Location Open Date",'YYY-MM-DD') <= as_of_dte,'Y','N') as "Location Open Indicator",
+    If(Date#("Location Open Date",'YYY-MM-DD') <= as_of_dte_ly,'Y','N') as "Location Open Indicator LY"
+Resident temp;
+
+Drop table temp;
+
+LIB CONNECT TO '$(vEnv)-repository:bq_qlik';
+
+[maj_cl]:
+Left Keep(Fact)
+LOAD dept_nbr&'|'&maj_cl_nbr as %MAJ_CL,
+	 maj_cl_nbr&' - '&maj_cl_nm as "Major Class";
+SELECT `dept_nbr`,
+	`maj_cl_nbr`,
+	`maj_cl_nm`
+FROM `kohls-bda-prd`.`dp_merchandising`.`bqth_mdsg_maj_cl`
+WHERE `eff_dte`<= CURRENT_DATE() and `expir_dte`>=CURRENT_DATE();
+
+[dept]:
+Left Keep(Fact)
+LOAD dept_nbr as %DEPT,
+	 dept_nbr&' - '&dept_nm as Department,
+	 dma_nbr&' - '&dma_nm as Category,
+	 gma_nbr&' - '&gma_nm as GM,
+     bus_gp_nbr&' - '&bus_gp_desc as "Business Group",
+     byr_nbr&' - '&byng_offc_desc as Buyer,
+     if(dma_nbr='50','Y','N') as "Sephora Indicator",
+     if(Match(dept_nbr,'23','28','30','47','78','86','88','92','96','103','113','145','246','247','254','256','310','324','353','356','406','424','440','441','448','553','556','624','644','653','657','754','756','852','902','914','915','922'),'Y','N') as DeptExcludedFromMSI;
+SELECT `dept_nbr`,
+	`dept_nm`,
+	`dma_nbr`,
+	`dma_nm`,
+	`gma_nbr`,
+	`gma_nm`,
+	`bus_gp_nbr`,
+	`bus_gp_desc`,
+	`bus_area_id`,
+	`bus_area_desc`,
+	`byr_nbr`,
+	`byng_offc_desc`
+FROM `kohls-bda-prd`.`dp_merchandising`.`bqth_mdsg_dept`
+WHERE `eff_dte`<= CURRENT_DATE() and `expir_dte`>=CURRENT_DATE();
+
+itm_stat_desc_grp:
+LOAD * INLINE [
+itm_stat_desc, itm_stat_desc_grp
+Regular, Total
+Clearance, Total
+Regular, Regular
+Clearance, Clearance
+];
+
+replenishableorallocated_grp:
+LOAD * INLINE [
+rplnt_ind, replenishableorallocated_grp
+Y, Total
+N, Total
+Y, Replen
+N, Alloc
+];
+
+sephoraindicator_grp:
+LOAD * INLINE [
+Sephora Indicator, sephoraindicator_grp
+Y, Include Sephora
+N, Include Sephora
+Y, Only Sephora
+N, Exclude Sephora
+];
+
+channel_grp:
+LOAD * INLINE [
+ecom_ind, channel_grp
+Y, Digital
+N, Store
+Y, Omni
+N, Omni
+];
+
+assortment_age_grp:
+LOAD * INLINE [
+Assortment_Age, assortment_age_grp
+0-30, 0-90
+31-60, 0-90
+61-90, 0-90
+91-120, 91-180
+121-150, 91-180
+151-180, 90-180
+181+, 181+
+];
+///$tab Section 2
