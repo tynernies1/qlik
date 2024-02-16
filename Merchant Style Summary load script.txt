@@ -1,0 +1,742 @@
+///$tab Main
+SET ThousandSep=',';
+SET DecimalSep='.';
+SET MoneyThousandSep=',';
+SET MoneyDecimalSep='.';
+SET MoneyFormat='$ ###0.00;-$ ###0.00';
+SET TimeFormat='h:mm:ss TT';
+SET DateFormat='M/D/YYYY';
+SET TimestampFormat='M/D/YYYY h:mm:ss[.fff] TT';
+SET FirstWeekDay=6;
+SET BrokenWeeks=1;
+SET ReferenceDay=0;
+SET FirstMonthOfYear=1;
+SET CollationLocale='en-US';
+SET CreateSearchIndexOnReload=0;//changed from 1 to 0 to stop field search index creation during reload 
+SET MonthNames='Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec';
+SET LongMonthNames='January;February;March;April;May;June;July;August;September;October;November;December';
+SET DayNames='Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+SET LongDayNames='Monday;Tuesday;Wednesday;Thursday;Friday;Saturday;Sunday';
+SET NumericalAbbreviation='3:k;6:M;9:G;12:T;15:P;18:E;21:Z;24:Y;-3:m;-6:μ;-9:n;-12:p;-15:f;-18:a;-21:z;-24:y';
+
+LET vThousand = 1;
+
+
+
+
+
+///$tab Section
+$(Must_Include=lib://prd-repository:gcs_qlik/foundation/bi/enterprise-v2/subroutines/s_environment_var.txt);
+
+IF '$(odagActive)'='' THEN
+
+	Set vReloadMode = 'Current';
+    Set vScriptFile = 'qvf_merchant_style_summary';
+
+Else
+	// Override vEnv based on the ODAG Seleciton Template
+	Set vEnv = $(odag_%env);
+    Let vRepoBasePath = Replace('$(vRepoBasePath)','lle-','$(vEnv)-');
+
+	If Match('$(odags_%filter_date_type){"quote": ""}','Date Range','Predefined Range','Event') Then
+    
+    	Set vReloadMode = 'Date Range';
+    	Set vScriptFile = 'qvf_merchant_style_summary_date_range_template'; //qvf_merchant_style_summary_date_range_template
+        Set o_StartDate = $(odagn_%filter_start_date){"noValue": "44927"};
+        Set o_EndDate = $(odagn_%filter_end_date){"noValue": "44927"};
+        Set o_DateRange = $(odag_%filter_date_range){"noValue": ""};
+        Set o_CacheFlag = $(odagn_%filter_cache_flag){"noValue": "0"};
+        
+        If $(o_CacheFlag) Then
+           	
+            Let vStartDate = Date(Date#(SubField('$(o_DateRange)',' - ',1),'MM/DD/YYYY'),'YYYY-MM-DD');
+			Let vEndDate = Date(Date#(SubField('$(o_DateRange)',' - ',2),'MM/DD/YYYY'),'YYYY-MM-DD');
+        
+        Else
+        
+        	Let vStartDate = Date(RangeMin($(o_StartDate)),'YYYY-MM-DD');
+			Let vEndDate = Date(RangeMax($(o_EndDate)),'YYYY-MM-DD');
+    	
+      	EndIf;
+        
+    Else
+    
+        Set vReloadMode = 'Historical';
+    	Set vScriptFile = 'qvf_merchant_style_summary';    
+        Let vFY = SubField('$(odag_%filter_year_week){"quote": ""}','-W',1);
+        Let vFW = SubField('$(odag_%filter_year_week){"quote": ""}','-W',2);
+    
+    EndIf;
+
+// Log ODAG Requests
+// Check for the existance of the cached files
+
+Let vFilePath = 'lib://$(vEnv)-repository:DataFiles/';
+Let vFactQVD = 'SSFact_$(vStartDate)_to_$(vEndDate).qvd';
+
+Let vFilePath1 = 'lib://$(vEnv)-repository:gcs_ext_qlik/$(vEnv)/cache/style-summary/';
+Let vFactQVD1 = '$(vFY)-w$(vFW)/Sales_Inv.qvd';
+ 
+Let vSSFact_CacheFile_Exists = IsNull(FileTime('$(vFilePath)$(vFactQVD)')) ;
+Let vYearWeek_CacheFile_Exists =  IsNull(FileTime('$(vFilePath1)$(vFactQVD1)')) ;
+
+	Let vNow = converttoLocalTime( Now(), 'Central Time (US & Canada)'); //Now();
+	Let vTime = Replace(Date(Now(), 'YYYY-MM-DD HH:MM:SS TT'),':','_');
+	Let vUser = subfield(subfield(OSUser(), 'UserId=',2), '@',1);
+	Let vEmail = subfield(OSUser(), 'UserId=',2);
+
+	NoConcatenate
+    ODAG_Run:
+    LOAD
+    	'$(vReloadMode)' 				as %filter_reload_mode,
+        '$(vScriptFile)' 				as %filter_script_file,
+        '$(o_CacheFlag)' 				as %filter_cacheflag,
+        '$(vStartDate)' 				as %filter_start_date,
+        '$(vEndDate)' 					as %filter_end_date,
+        '$(vFY)' 						as %filter_fiscal_year,
+        '$(vFW)' 						as %filter_fiscal_week,
+        '$(vEmail)' 					as %EMAIL,
+        '$(vUser)' 						as %USER,
+        '$(vNow)' 						as %run_datetime,
+        '$(vEnv)'						as %odag_env,
+        '$(vSSFact_CacheFile_Exists)' 	as %SSFact_CacheFile_Exists,
+        '$(vYearWeek_CacheFile_Exists)' as %YearWeek_CacheFile_Exists 
+   autogenerate(1);
+   
+   Store ODAG_Run into  [lib://$(vEnv)-logs:DataFiles/Merchant_Style_Summary_Ad_Hoc_ODAG_Run_$(vUser)_$(vTime).qvd] (qvd);
+ 
+EndIf;
+
+
+$(Must_Include=lib://$(vEnv)-repository:gcs_qlik/foundation/bi/enterprise-v2/apps/$(vScriptFile).txt);
+///$tab Exit Script
+Exit Script;
+///$tab Must_Include
+$(Must_Include=lib://prd-repository:gcs_qlik/foundation/bi/enterprise-v2/subroutines/s_environment_var.txt);
+
+IF '$(odagActive)'='' THEN
+
+	Set vReloadMode = 'Current';
+    Set vScriptFile = 'qvf_merchant_style_summary';
+
+Else
+	// Override vEnv based on the ODAG Seleciton Template
+	Set vEnv = $(odag_%env);
+
+	If '$(odags_%filter_date_type){"quote": ""}' = 'Date Range' Then
+    
+    	Set vReloadMode = 'Date Range';
+    	Set vScriptFile = 'qvf_merchant_style_summary_date_range_template'; //qvf_merchant_style_summary_date_range_template
+        Set o_StartDate = $(odagsn_%filter_start_date){"noValue": "44927"};
+        Set o_EndDate = $(odagsn_%filter_end_date){"noValue": "44927"};
+        Set o_DateRange = $(odags_%filter_date_range){"noValue": ""};
+        Set o_CacheFlag = $(odagn_%filter_cache_flag){"noValue": "0"};
+        
+        If $(o_CacheFlag) Then
+           	
+            Let vStartDate = Date(Date#(SubField('$(o_DateRange)',' - ',1),'MM/DD/YYYY'),'YYYY-MM-DD');
+			Let vEndDate = Date(Date#(SubField('$(o_DateRange)',' - ',2),'MM/DD/YYYY'),'YYYY-MM-DD');
+        
+        Else
+        
+        	Let vStartDate = Date(RangeMin($(o_StartDate)),'YYYY-MM-DD');
+			Let vEndDate = Date(RangeMax($(o_EndDate)),'YYYY-MM-DD');
+    	
+      	EndIf;
+        
+    Else
+    
+        Set vReloadMode = 'Historical';
+    	Set vScriptFile = 'qvf_merchant_style_summary';    
+        Let vFY = SubField('$(odags_%filter_year_week){"quote": ""}','-W',1);
+        Let vFW = SubField('$(odags_%filter_year_week){"quote": ""}','-W',2);
+    
+    EndIf;
+    
+// Log ODAG Requests
+// Check for the existance of the cached files
+
+Let vFilePath = 'lib://$(vEnv)-repository:DataFiles/';
+Let vFactQVD = 'SSFact_$(vStartDate)_to_$(vEndDate).qvd';
+
+Let vFilePath1 = 'lib://$(vEnv)-repository:gcs_ext_qlik/$(vEnv)/cache/style-summary/';
+Let vFactQVD1 = '$(vFY)-w$(vFW)/Sales_Inv.qvd';
+ 
+Let vSSFact_CacheFile_Exists = IsNull(FileTime('$(vFilePath)$(vFactQVD)')) ;
+Let vYearWeek_CacheFile_Exists =  IsNull(FileTime('$(vFilePath1)$(vFactQVD1)')) ;
+
+	Let vNow = converttoLocalTime( Now(), 'Central Time (US & Canada)'); //Now();
+	Let vTime = Replace(Date(Now(), 'YYYY-MM-DD HH:MM:SS TT'),':','_');
+	Let vUser = subfield(subfield(OSUser(), 'UserId=',2), '@',1);
+	Let vEmail = subfield(OSUser(), 'UserId=',2);
+
+	NoConcatenate
+    ODAG_Run:
+    LOAD
+    	'$(vReloadMode)' 				as %filter_reload_mode,
+        '$(vScriptFile)' 				as %filter_script_file,
+        '$(o_CacheFlag)' 				as %filter_cacheflag,
+        '$(vStartDate)' 				as %filter_start_date,
+        '$(vEndDate)' 					as %filter_end_date,
+        '$(vFY)' 						as %filter_fiscal_year,
+        '$(vFW)' 						as %filter_fiscal_week,
+        '$(vEmail)' 					as %EMAIL,
+        '$(vUser)' 						as %USER,
+        '$(vNow)' 						as %run_datetime,
+        '$(vEnv)'						as %odag_env,
+        '$(vSSFact_CacheFile_Exists)' 	as %SSFact_CacheFile_Exists,
+        '$(vYearWeek_CacheFile_Exists)' as %YearWeek_CacheFile_Exists 
+   autogenerate(1);
+   
+   Store ODAG_Run into  [lib://$(vEnv)-logs:DataFiles/Merchant_Style_Summary_Ad_Hoc_ODAG_Run_$(vUser)_$(vTime).qvd] (qvd);
+ 
+EndIf;
+
+
+$(Must_Include=lib://$(vEnv)-repository:gcs_qlik/foundation/bi/enterprise-v2/apps/$(vScriptFile).txt);
+///$tab Code - MT 8/01
+LET vFiscalYearStart = vFiscalYear-2;
+LET vFiscalYear0 = vFiscalYear-0;
+LET vFiscalYear1 = vFiscalYear-1;
+LET vFiscalYear2 = vFiscalYear-2;
+
+LET vAppLongName = Right(DocumentTitle(),11);
+
+
+List:
+LOAD
+    *,
+    if(TODAY()-7<=End_WTD_TY,'Y','N') as Repull,
+    if(floor(Start_WTD_TY) = floor(Weekstart(TODAY()-7)),'LW',
+    if(floor(Start_WTD_TY) = floor(Weekstart(TODAY()-14)),'2W',
+    if(floor(Start_WTD_TY) = floor(Weekstart(TODAY()-21)),'3W','TW'))) as Week
+
+    Where Start_WTD_TY  <=  TODAY()-1;
+
+LOAD
+    "Fiscal Year - Week",
+    Date(Min(Start_WTD_TY))         as Start_WTD_TY,
+    Date(Max(End_WTD_TY))           as End_WTD_TY,
+    "Fiscal Year",
+    "Fiscal Week"
+FROM [lib://$(vEnv)-repository:DataFiles/FiscalCalendar.qvd]
+(qvd)Where %DATE >= Weekstart(TODAY()-21) and %DATE<TODAY()
+Group by "Fiscal Year - Week","Fiscal Year", "Fiscal Week";
+
+
+If '$(vAppLongName)' = '2 Weeks Ago' THEN
+      LET vWeekLookBack = '2W';
+ELSE
+If '$(vAppLongName)' = '3 Weeks Ago' THEN
+      LET vWeekLookBack = '3W';
+ELSE
+      LET vWeekLookBack = 'LW';
+ENDIF
+
+WeekChecker:
+NoConcatenate
+Load
+"Fiscal Year",
+"Fiscal Week",
+"Week"
+Resident List
+WHERE Week = '$(vWeekLookBack)';
+
+//LET vFY                   = peek('Fiscal Year',0,'WeekChecker');
+//LET vFW                   = peek('Fiscal Week',0,'WeekChecker');
+
+LET vFY                   = 2023;
+LET vFW                   = 25;
+
+Drop Table List;
+Drop Table WeekChecker;
+
+
+// Regular / Clearance Attribution
+// This table is used to build out Regular or Clearance SKU Product Filters built off of the SKU Status Code from the Sales & Inventory weekly QVDs
+SKUStatus:
+Load text([SKU Status Code]) as [SKU Status Code], [SKU Status], [SKU Status Description];
+Load * INLINE [
+SKU Status Code,SKU Status,SKU Status Description
+0,Regular,UNKNOWN
+00,Regular,UNKNOWN
+10,Regular,UNKNOWN
+20,Regular,ACTIVE
+40,Regular,PROMTIONAL
+90,Regular,DISCNTNUED
+25,Clearance,MIXED
+30,Clearance,CLEARANCE
+](delimiter is ',');
+
+
+
+//List timeframes to pull in to the application
+TimeFrameList:
+Load * Inline [
+TimeFrameInclude
+YTD
+STD
+QTD
+MTD
+WTD
+];
+
+//List timeframes to pull in to the application for Inventory
+InvTimeFrameList:
+Load * Inline [
+InvTimeFrameInclude
+WTD
+];
+
+//Sales & Inventory
+    Sales_Inv: 
+    LOAD
+        "As Of Date" as [As of Date],
+        "Year Period" as [Year Period],
+        "Calendar Type" as [Calendar],
+        "Timeperiod" as [Timeframe],
+        "%SKU" as [%SKU],
+        "%SKU_STATUS" as "SKU Status Code",
+        "Ecom Indicator" as [Ecom Indicator],
+        "Digital Demand Indicator",
+        "Digital Verified Indicator",
+        "Climate Attribution" as [Climate Attribution],
+        %SKU & '|' & [Ecom Indicator] & '|' & "Climate Attribution" as %ON_ORDER_KEY,
+      Num("As Of Date") &'|'& "Year Period" & '|' & "Calendar Type"& '|' & "Timeperiod" &'|'& [%SKU] &'|'& "%SKU_STATUS"&'|'& [Ecom Indicator] as %IN_STK,
+        "Demand Sales $" as "Demand Sales $",
+        "Demand Sales Units" as "Demand Sales Units",
+        "Verified Sales $" as "Verified Sales $",
+        "Verified Sales Units $" as "Verified Sales Units"
+    FROM [lib://$(vEnv)-repository:DataFiles/Sales_SKU_Summary_$(vFY)-W$(vFW).qvd]
+    (qvd)
+    WHERE Exists(TimeFrameInclude,"Timeperiod")
+   ;
+
+    Join(Sales_Inv)//add inventory data to the same table as the sales data.
+    LOAD
+        "As Of Date" as [As of Date],
+        "Year Period" as [Year Period],
+        "Calendar Type" as [Calendar],
+        "Timeperiod" as [Timeframe],
+        "%SKU" as [%SKU],
+        "%SKU_STATUS" as "SKU Status Code",
+        "E Bus Indicator" as [Ecom Indicator],
+        "E Bus Indicator" as "Digital Demand Indicator",
+        "E Bus Indicator" as "Digital Verified Indicator",
+        "Climate Attribution",
+        %SKU & '|' & "E Bus Indicator" & '|' & "Climate Attribution" as %ON_ORDER_KEY,
+      	Num("As Of Date") &'|'& "Year Period" & '|' &"Calendar Type"& '|' & "Timeperiod" &'|'& [%SKU] &'|'& "%SKU_STATUS"&'|'&[E Bus Indicator] as %IN_STK,
+        "BOH Quantity" as "BOH Quantity",
+        "BOH Retail $" as "BOH Retail Amount",
+        [EOH Cost $] AS [EOH Cost Amount],
+        [EOH Quantity] AS [EOH Quantity],
+        [EOH Retail $] AS [EOH Retail Amount],
+        "Receipt Retail $" as "Receipt $",
+        "Receipt Units" as "Receipt Units",
+        "Receipt Cost $" as "Receipt Cost $",
+        "Receipt First Cost $" as "Receipt First Cost $"
+    FROM [lib://$(vEnv)-repository:DataFiles/Inventory_SKU_Summary_$(vFY)-W$(vFW).qvd]
+    (qvd)
+    WHERE Exists(InvTimeFrameInclude,"Timeperiod")
+    ;
+
+
+    Drop Table [InvTimeFrameList];
+
+    Rename Table Sales_Inv to Sales_Inv_tmp;
+
+    Sales_Inv:
+    NoConcatenate Load
+        [%IN_STK],
+        [%ON_ORDER_KEY],
+        [%SKU],
+        [As of Date],
+        [Timeframe],
+        [Year Period],
+        [Calendar],
+        [SKU Status Code],
+        [Digital Demand Indicator],
+        [Digital Verified Indicator],
+        [Ecom Indicator],
+        [Climate Attribution],
+        Sum([BOH Quantity]) as [BOH Quantity],
+        Sum([BOH Retail Amount]) as [BOH Retail Amount],
+        Sum([Demand Sales $]) as [Demand Sales $],
+        Sum([Demand Sales Units]) as [Demand Sales Units],
+        Sum([EOH Cost Amount]) as [EOH Cost Amount],
+        Sum([EOH Quantity]) as [EOH Quantity],
+        Sum([EOH Retail Amount]) as [EOH Retail Amount],
+        Sum([Receipt $]) as [Receipt $],
+        Sum([Receipt Cost $]) as [Receipt Cost $],
+        Sum([Receipt First Cost $]) as [Receipt First Cost $],
+        Sum([Receipt Units]) as [Receipt Units],
+        Sum([Verified Sales $]) as [Verified Sales $],
+        Sum([Verified Sales Units]) as [Verified Sales Units]
+    Resident
+        Sales_Inv_tmp
+    Group By
+        [%IN_STK],
+        [%ON_ORDER_KEY],
+        [%SKU],
+        [As of Date],
+        [Timeframe],
+        [Year Period],
+        [Calendar],
+        [SKU Status Code],
+        [Digital Demand Indicator],
+        [Digital Verified Indicator],
+        [Ecom Indicator],
+        [Climate Attribution];
+
+    Drop Table Sales_Inv_tmp;
+
+	NoConcatenate
+ 	On_Order:
+     LOAD
+       %SKU & '|' & "E Bus Indicator" & '|' & "Climate Attribution" as %ON_ORDER_KEY,
+       %SKU,
+       "E Bus Indicator" as [Ecom Indicator],
+       "Climate Attribution",
+       sum([On Order $])      as  "On Order $",
+       sum([On Order Units])  as  "On Order Units",
+       avg([On Order Cost $]) as  "On Order Cost $",
+       sum([On Order $ N1W])      as  "On Order $ TW",
+       sum([On Order Units N1W])  as  "On Order Units TW",
+       avg([On Order Cost $ N1W]) as  "On Order Cost $ TW",
+       sum([On Order $ N2W])      as  "On Order $ N2W",
+       sum([On Order Units N2W])  as  "On Order Units N2W",
+       avg([On Order Cost $ N2W]) as  "On Order Cost $ N2W",
+       sum([On Order $ N4W])      as  "On Order $ N4W",
+       sum([On Order Units N4W])  as  "On Order Units N4W",
+       avg([On Order Cost $ N4W]) as  "On Order Cost $ N4W"
+     FROM [lib://$(vEnv)-repository:DataFiles/PO_On_Order.qvd]
+     (qvd)
+     Group By %SKU & '|' & "E Bus Indicator" & '|' & "Climate Attribution", [%SKU], [E Bus Indicator],[Climate Attribution]
+     ;
+     
+    Join(Sales_Inv)
+    Load Distinct
+    	[%ON_ORDER_KEY],
+        %SKU,
+       [Ecom Indicator],
+       "Climate Attribution"
+    Resident On_Order
+    ;
+
+	Drop Fields [%SKU], [Ecom Indicator],[Climate Attribution] From On_Order;
+
+
+
+in_stock:
+Load
+    Num("As Of Date") &'|'& "Year Period" &'|'& "Calendar Type" &'|'& Timeperiod & '|' & [%SKU]&'|'& %SKU_STATUS&'|'& [E Bus Indicator] as %IN_STK,
+    "As Of Date" as [As of Date],
+    "Year Period",
+    "Calendar Type" as [Calendar],
+    Timeperiod as [Timeframe],
+    %SKU,
+    %SKU_STATUS as [SKU Status Code],
+    [E Bus Indicator] as [Ecom Indicator],
+    [Replen Days In Stock],
+    [Replen Days OOS],
+    [Alloc Days OOS],
+    [Alloc Days In Stock]
+From [lib://$(vEnv)-repository:DataFiles/Inventory_SKU_In_Stock_$(vFY)-W$(vFW).qvd](qvd)
+;
+
+
+Join(Sales_Inv)
+Load Distinct
+	%IN_STK,
+  "As of Date",
+  "Year Period",
+  "Calendar",
+  Timeframe,
+  %SKU,
+  [SKU Status Code],
+  [Ecom Indicator]
+Resident
+	in_stock;
+    
+    
+Drop Fields 
+	"As of Date",
+    "Year Period",
+    "Calendar",
+    Timeframe,
+    %SKU,
+    [SKU Status Code],
+    [Ecom Indicator]
+From in_stock;
+
+
+    Location:
+    Load
+      [B&M Store Indicator],
+      [Ecommerce Location Indicator],
+      COUNT(DISTINCT %LOC) AS [Store Count]
+    FROM [lib://$(vEnv)-repository:DataFiles/Location.qvd](qvd)
+    where 
+    	[Location Close Date] >'$(vStart_WTD_TY)'
+    and
+    	[Location Open Date] <= '$(vStart_WTD_TY)'
+   	group by [B&M Store Indicator],[Ecommerce Location Indicator]
+    ;
+    
+    let vRows = NoOfRows('Location')-1;
+    
+    FOR r=0 to $(vRows)
+		let vBMInd = peek('B&M Store Indicator',$(r),'Location');
+    	let vEBusInd = peek('Ecommerce Location Indicator',$(r),'Location');    
+    	
+        IF '$(vBMInd)'= 1 and '$(vEBusInd)'= 0 THEN
+
+            let vBMStoreCount = peek('Store Count',$(r),'Location');
+
+
+        ElSEIF '$(vBMInd)'= 0 and '$(vEBusInd)'= 1 THEN
+
+            let vDigitalStoreCount = peek('Store Count',$(r),'Location');
+
+        ENDIF
+    NEXT r
+    
+    drop table Location;
+    
+    Product: //load the QVD matching the value in the vSkuStatus variable for the current iteration
+    LOAD
+        %SKU,
+        "Attribute 1 Description",
+        "Attribute 2 Description",
+        "Brand ID",
+        "Brand Name",
+        "Brand Abbreviation",
+        "Brand Type Code",
+        "Brand Type Description",
+        "Buying Office Description",
+        "Buyer Number",
+        "Unit First Cost Amount",
+        "Corp Unit Cost Amount",
+        "Corp Unit Retail Amount",
+        "Department Number",
+        "Department Description",
+        "Category Number",
+        "Category Description",
+        "Corp First Receipt Date",
+        "Corp First Sale Date",
+        "Corp Last Receipt Date",
+        "Direct Ship Indicator",
+        "GM Number",
+        "GM Description",
+        "Group Code",
+        "Inner Pack Quantity",
+        "Key Classification Description",
+        "Major Class Number",
+        "Major Class Description",
+        "Replenishable Indicator",
+        "Sale Indicator",
+        "SKU Number",
+        "SKU Description",
+        "Subclass Number",
+        "Subclass Description",
+        "Business Group Number",
+        "Business Group Description",
+        "Web Exclusive Indicator",
+        "Seasonality Description",
+        "Style ID",
+        "Style Description",
+        "Style Trend Description",
+        "Style Primary Trend Description",
+        "Style Secondary Trend Description",
+        "Style Create Date",
+        "Vendor Color",
+        "Vendor Style Number",
+       "Vendor Style Description",
+        "Vendor Style ID",
+        "Style Major Category Description",
+        "Parent Product ID",
+       "Product Web Display Name",
+        "SKU Return Info",
+      	Feature,
+        Pattern,
+        Brand,
+        Buyer,
+        Department,
+        Category,
+        GM,
+        "Major Class",
+        Subclass,
+        Style,
+       "Vendor Style",
+        "Business Group",
+        [Product Image URL],
+        Silhouette,
+        [Fashion Pyramid Description],
+        "Vendor ID",
+        "Vendor Name",
+        "Vendor UPC Number",
+        "Executive Business Group Number",
+        "Executive Business Group Name",
+        [Executive Business Group],
+        "Merch Category",
+        "Web ID",
+        "Display Color"
+
+    FROM [lib://$(vEnv)-repository:DataFiles/Product.qvd]
+    (qvd)
+    where exists(%SKU)
+    ;
+
+//Load Calendar data
+    FiscalCalendar: // load the fiscal calendar data for dates that already exist in the sales & inventory data.
+    LOAD
+        Start_STD_TY,
+        Start_YTD_TY,
+        Start_QTD_TY,
+        Start_MTD_TY,
+        Start_WTD_TY,
+        "Date",
+        "Day Name",
+        "Date Number",
+        "Fiscal Year",
+        "Fiscal Month",
+        "Fiscal Month Name",
+        "Fiscal Qtr",
+        "Fiscal Week",
+        Season,
+        "Fiscal Year - Season",
+        Start_DAY_TY,
+        End_DAY_TY,
+        End_WTD_TY,
+        End_QTD_TY,
+        End_YTD_TY,
+        End_STD_TY,
+        "Fiscal Year - Month",
+        "Fiscal Year - Week",
+        "Fiscal Year - Quarter",
+        %DATE as [As of Date]
+
+    FROM [lib://$(vEnv)-repository:DataFiles/FiscalCalendar.qvd]
+    (qvd)
+    WHERE exists(%DATE)
+    ;
+
+	Historical_Dates: //create a list of dates to be used for executing ODAG to retrieve historical style summary data.
+    LOAD
+        Date(Max(End_WTD_TY),'YYYY-MM-DD') as Week_Ending_Date
+    FROM [lib://$(vEnv)-repository:DataFiles/FiscalCalendar.qvd]
+    (qvd)Where  %DATE >= Weekstart(TODAY()-30) and %DATE<TODAY()-7
+    Group by "Fiscal Year - Week";
+
+    //load column picking options. These are all orphan tables that wont join to any other table. These options are embedded in the IF logic that drives the user facing check boxes that determine what fields are shown in the WBS & DBS sheets.
+    Timeperiod_Orphan:
+    load * Inline [
+    Timeperiod
+    WTD
+    MTD
+    QTD
+    STD
+    YTD
+    ];
+    
+    Year_Types_Orphan:
+    load * Inline [
+    Year_Types
+    LY
+    Shifted
+    ];
+
+    Metric_Types_Orphan:
+    load * Inline [
+    Metric_Types
+    Sales $
+    AUR $
+    Profit %
+    Inventory $
+    On Order $
+    ];
+
+    Channel_Types_Orphan:
+    load * Inline [
+    Channel_Types
+    Omni
+    Store
+    Digital
+    ];
+
+    Dimension_Types_Orphan:
+    load * Inline [
+        Dimension_Types
+        GM
+        Category
+        Buyer
+        Department
+        Major Class
+        Subclass
+        Group Code
+        Parent Product ID
+        Vendor Style
+        Vendor Color
+        SKU
+        ];
+
+    Product_Type_Orphan:
+    load * Inline [
+        Product_Types
+        Product Image
+        Status Type
+        Corp Unit Cost
+        Corp Unit Retail
+        Corp First Receipt Date
+        Vendor UPC Number
+        Product Web Display Name
+        Brand Name
+        Brand Type Description
+        Vendor Name
+        Seasonal Key Class
+        Key Classification Description
+        Web Exclusive Indicator
+        Direct Ship Indicator
+        Executive Business Group
+        Silhouette
+        Attribute 1 Description
+        Attribute 2 Description
+        Style Primary Trend Description
+        Style Trend Description
+        Seasonality Description
+        Fashion Pyramid Description
+        Pattern
+        ];
+
+    SeasonalKeyClass:
+    Load * Inline [
+    Key Classification Description,Seasonal Key Class Group
+    BEACH TOWELS,SPRING
+    BOOTS-COLD WEATHER,FALL
+    BOOTS-FASHION,YEAR ROUND
+    CAPRIS,SPRING
+    COLD WEATHER ACCESSO,FALL
+    COLD WEATHER HOME,FALL
+    DRESSES,YEAR ROUND
+    FLEECE,FALL
+    FLIP FLOPS,SPRING
+    LONG DENIM,YEAR ROUND
+    LOUNGEWEAR,FALL
+    NON-DENIM LONG BTTMS,YEAR ROUND
+    OUTERWEAR,FALL
+    POLOS,SPRING
+    ROBES,FALL
+    SANDALS,SPRING
+    SHORTS,SPRING
+    SKIRTS/SCOOTERS,SPRING
+    SLEEPWEAR,FALL
+    SLIPPERS,FALL
+    SWEATERS,FALL
+    SWIM,SPRING
+    TANKS,SPRING
+    TEES,SPRING
+    WOVENS,YEAR ROUND
+    ];
+
+
+    Autonumber "%*";
